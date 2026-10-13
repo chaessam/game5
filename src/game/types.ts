@@ -97,5 +97,7 @@ export interface GameState {
   pendingRewards: PendingReward[];
   /** 이번 라운드 몬스터(라운드 시작에 시드로 고름) */
   monsterIndex: number;
+  /** 튜토리얼: 라운드마다 정해 둔 몬스터 */
+  monsters?: Record<number, { name: string; board: import('../engine/types').BoardUnit[] }>;
   log: string[];
 }

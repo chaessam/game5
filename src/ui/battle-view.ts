@@ -13,6 +13,23 @@ export interface BattleViewOpts {
   oppName: string;
   /** 끝나거나 건너뛰면 */
   onDone: () => void;
+  /** 박이 끝날 때 하나쌤이 할 말(튜토리얼·처음 보는 순간). 말이 있으면 멈추고 [계속]을 기다린다 */
+  talk?: (beat: number, events: BattleEvent[], view: { side: 0 | 1; result: BattleResult }) => string[];
+  /** 이 전투만의 빠르기(튜토리얼은 천천히) */
+  speed?: number;
+}
+
+/** 브라우저 내장 한국어 음성으로 읽어 주기 */
+export function readAloud(text: string) {
+  try {
+    const u = new SpeechSynthesisUtterance(text.replace(/[①②③]/g, ''));
+    u.lang = 'ko-KR';
+    u.rate = 1;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch {
+    /* 음성 없음 */
+  }
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -45,8 +62,15 @@ export class BattleView {
   private talked = new Set<number>();
   private alive = new Set<number>();
 
+  private resume: (() => void) | null = null;
+  private savedSpeed: number | null = null;
+
   constructor(opts: BattleViewOpts) {
     this.opts = opts;
+    if (opts.speed) {
+      this.savedSpeed = speed;
+      speed = opts.speed;
+    }
     this.r = opts.result;
     this.side = opts.side;
     this.byId = new Map(this.r.fighters.map((f) => [f.id, f]));
@@ -68,6 +92,11 @@ export class BattleView {
   /** 다른 화면으로 넘어갈 때 */
   stop() {
     this.stopped = true;
+    this.resume?.();
+    if (this.savedSpeed !== null) {
+      speed = this.savedSpeed;
+      this.savedSpeed = null;
+    }
   }
 
   // ---------------- 뼈대 ----------------
@@ -388,8 +417,30 @@ export class BattleView {
       this.applyFrame(frame, true);
       this.prophecy(Math.max(beat, 0));
       await this.wait(big ? 480 : 170);
+      const lines = this.opts.talk?.(beat, this.evByBeat.get(beat) ?? [], { side: this.side, result: this.r }) ?? [];
+      for (const line of lines) {
+        if (this.stopped) return;
+        await this.say(line);
+      }
     }
     this.end();
+  }
+
+  /** 하나쌤 말풍선을 띄우고 [계속]을 누를 때까지 기다린다 */
+  private say(text: string): Promise<void> {
+    const fx = this.root.querySelector<HTMLElement>('.bv-fx')!;
+    const b = document.createElement('div');
+    b.className = 'bv-say';
+    b.innerHTML = `<div class="who">${charArt(1, 54, { noNumber: true, noGems: true })}</div><div class="txt">${esc(text)}</div>
+      <div class="btns"><button class="btn small ghost" data-bv="read">🔊</button><button class="btn small gold" data-bv="resume">계속 ▶</button></div>`;
+    fx.appendChild(b);
+    return new Promise((res) => {
+      this.resume = () => {
+        b.remove();
+        this.resume = null;
+        res();
+      };
+    });
   }
 
   private end() {
@@ -425,9 +476,18 @@ export class BattleView {
         setMuted(!isMuted());
         el.textContent = isMuted() ? '🔇 소리 끔' : '🔊 소리';
         break;
+      case 'resume':
+        this.resume?.();
+        break;
+      case 'read': {
+        const t = el.closest('.bv-say')?.querySelector('.txt')?.textContent ?? '';
+        readAloud(t);
+        break;
+      }
       case 'skip':
       case 'done':
         this.stopped = true;
+        this.resume?.();
         this.opts.onDone();
         break;
     }

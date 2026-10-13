@@ -130,6 +130,7 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .pvtag { position: absolute; right: 2px; top: 2px; font-family: 'Jua', sans-serif; font-size: 14px; border-radius: 8px; padding: 0 5px; z-index: 2; }
 .pvtag.ok { background: #3ee07f; color: #0e2a19; }
 .pvtag.no { background: rgba(255,255,255,.2); color: #fff; }
+.hstag { position: absolute; right: 2px; bottom: 14px; font-size: 11px; font-weight: 800; background: rgba(127,211,255,.9); color: #0e2140; border-radius: 8px; padding: 0 4px; }
 .uitems { position: absolute; left: 2px; top: 2px; display: flex; gap: 2px; }
 .uitems i { font-style: normal; font-family: 'Jua', sans-serif; font-size: 11px; background: #3fa3ff; color: #fff; border-radius: 6px; padding: 0 3px; }
 .members span.mb-stone { border-style: dashed; }
@@ -148,6 +149,25 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .pv-song { border: 2px dashed rgba(255,197,49,.6); border-radius: 12px; padding: 8px 10px; font-size: 14px; background: rgba(255,197,49,.08); }
 .pv-song small { color: var(--muted); }
 .pv-warn { margin: 8px 0; padding: 8px 10px; border-radius: 10px; background: rgba(255,107,129,.2); border: 2px solid var(--bad); font-weight: 800; }
+
+/* 하나쌤 말풍선(전투 안) */
+.bv-say { position: absolute; left: 0; right: 0; margin: 0 auto; top: 34%; pointer-events: auto; display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 4px 10px; align-items: center; width: min(560px, 92%); background: #fff; color: #1d1440; border-radius: 18px; padding: 10px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.5); border: 3px solid var(--gold); z-index: 6; animation: popin .3s ease-out; }
+.bv-say .txt { font-size: 16px; font-weight: 800; line-height: 1.45; }
+.bv-say .btns { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 6px; }
+/* 튜토리얼 말풍선(준비 화면: 가운데 위에 끼움 / 결과 화면: 아래 떠 있음) */
+.tut { display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; background: #fff; color: #1d1440; border-radius: 16px; padding: 6px 12px; border: 3px solid var(--gold); }
+.tut.dock { flex: none; }
+.tut.float { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 35; width: min(720px, calc(100vw - 32px)); box-shadow: 0 12px 34px rgba(0,0,0,.55); }
+.tut .txt { font-size: 15px; font-weight: 800; line-height: 1.4; }
+.tut .txt small { display: block; color: #6b55ff; font-size: 12px; margin-top: 1px; }
+.tut .btns { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tut .prog { font-size: 11px; color: #6b6497; }
+.tut-hl { outline: 4px solid var(--gold) !important; outline-offset: 2px; animation: tutpulse 1s ease-in-out infinite; border-radius: 12px; }
+@keyframes tutpulse { 0%, 100% { outline-color: rgba(255,197,49,1); } 50% { outline-color: rgba(255,197,49,.25); } }
+.quiz .q { font-family: 'Jua', sans-serif; font-size: 20px; margin: 10px 0 6px; }
+.quiz .opts { display: flex; gap: 8px; flex-wrap: wrap; }
+.quiz .opt.ok { border-color: var(--good); background: rgba(62,224,127,.2); }
+.quiz .opt.no { border-color: var(--bad); background: rgba(255,107,129,.15); }
 
 /* 들어가기 */
 .loginbox { background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }

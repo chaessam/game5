@@ -2,7 +2,7 @@
 // 상대 판 구경, 박자 전투 장면(소리), 숫자 돌·보물 끼우기(미리보기 3줄 + 30박).
 import './style.css';
 import { DEFAULT_CONFIG, FAMILIES, ROLES, UNITS, UNIT_IDS, tierOf } from '../engine/data';
-import { divisors, familiesOf, splitPair } from '../engine/math';
+import { divisors, familiesOf, gcd, splitPair } from '../engine/math';
 import { songText } from '../engine/describe';
 import { formatBattleLog } from '../engine/log';
 import type { BoardUnit, FamilyId, RoleId } from '../engine/types';
@@ -17,13 +17,16 @@ import {
   FAM_ORDER, ITEM_HELP, ITEM_LABEL, ITEM_NAME, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, previewEquip, secondSlotRound, slotCount,
   synergyOf, unequip,
 } from '../game/items';
-import type { Difficulty, GameState, PlayerState, Slot, UnitInst } from '../game/types';
+import type { BagItem, Difficulty, GameState, PlayerState, Slot, UnitInst } from '../game/types';
 import { ART, charArt, famIcon, roleIcon } from './art/chars';
 import { FAM_COLOR, ROLE_COLOR } from './art/parts';
 import { BattleView } from './battle-view';
 import { unlockAudio } from './sound';
 import { battleInsight, momentText, type Moment } from './insight';
-import { bindLoginInputs, handleLoginAction, loginBoxHtml, refreshMe } from './login';
+import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe } from './login';
+import { QUIZ, TUT_ROUNDS, TUT_STEPS, createTutorial, fixTutorialRewards, prepareTutorialRound, stepDone, tutorialAllows, type TutTalk } from '../game/tutorial';
+import { readAloud } from './battle-view';
+import { saveProgress } from '../net/api';
 import { fetchGhosts, getAuth, saveGhost, saveRecord } from '../net/api';
 
 // ---------------- 상태 ----------------
@@ -45,6 +48,25 @@ const met = new Set<number>();
 const three = new Set<number>();
 const morphs = new Set<string>();
 let recordSaved = false;
+/** 튜토리얼 진행 */
+let tut: {
+  step: number;
+  rerolled: boolean;
+  selectedItem?: BagItem;
+  said: Set<string>;
+  /** 이 단계에 왔을 때 이미 해 둔 상태였으면 글만 읽고 [알겠어]로 넘김 */
+  arrivedDone?: boolean;
+  quiz?: { i: number; picked: number | null; score: number };
+  finished?: boolean;
+} | null = null;
+const tutStep = () => (tut && !tut.finished ? TUT_STEPS[tut.step] : undefined);
+const tutorialDoneLocal = () => {
+  try {
+    return localStorage.getItem('nc-tutorial-done') === '1';
+  } catch {
+    return false;
+  }
+};
 let modal: { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | null = { type: 'start' };
 type StartDiff = Difficulty | 'mix';
 let startDiff: StartDiff = 'easy';
@@ -63,6 +85,8 @@ const me = () => g!.players[0];
 const COST_COLOR = ['', 'var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)'];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const stars = (n: number) => '★'.repeat(n);
+/** 숫자 뒤 '와/과' (2·4·5·9로 끝나면 '와') */
+const gwa = (n: number) => ([2, 4, 5, 9].includes(n % 10) ? '와' : '과');
 const beatsOf = (n: number) => [1, 2, 3].map((k) => n * k).join('·') + '…';
 
 function toast(msg: string) {
@@ -158,7 +182,7 @@ function shopCard(p: PlayerState, i: number) {
     if (f) band = `<span class="band">놓으면: ${FAMILIES[f].name} ${s.fam[f].count}명 → ${s.fam[f].count + 1}명</span>`;
   }
   const cant = p.gold < u.cost;
-  return `<button class="card ${cant ? 'cant' : ''}" style="--cc:${COST_COLOR[u.cost]}" data-action="buy" data-i="${i}" title="눌러서 사기">
+  return `<button class="card ${cant ? 'cant' : ''}" style="--cc:${COST_COLOR[u.cost]}" data-action="buy" data-i="${i}" data-char="${char}" title="눌러서 사기">
     <span class="info" data-action="shopinfo" data-i="${i}" title="자세히">i</span>
     <span class="cost">${u.cost}골드</span>
     <span class="pic">${charArt(char, 64)}</span>
@@ -169,7 +193,27 @@ function shopCard(p: PlayerState, i: number) {
   </button>`;
 }
 
-function unitToken(u: UnitInst, size: number) {
+/** 손잡기: 붙은 친구와 최대공약수 2 이상이면 방패(최대공약수 × 12, 장갑이면 2배, 한 친구 최대 190) */
+function handshakes(p: PlayerState): Map<number, { shield: number; with: { num: number; g: number }[] }> {
+  const C = DEFAULT_CONFIG;
+  const units = [...p.board.entries()].map(([k, u]) => ({ u, row: Number(k[0]), col: Number(k[2]), num: numberOf(u) }));
+  const out = new Map<number, { shield: number; with: { num: number; g: number }[] }>();
+  for (const a of units) {
+    let sum = 0;
+    const w: { num: number; g: number }[] = [];
+    for (const b of units) {
+      if (a === b || Math.abs(a.row - b.row) + Math.abs(a.col - b.col) !== 1) continue;
+      const gg = gcd(a.num, b.num);
+      if (gg < 2) continue;
+      sum += gg * C.handshakePerGcd * (a.u.items.includes('glove') || b.u.items.includes('glove') ? 2 : 1);
+      w.push({ num: b.num, g: gg });
+    }
+    if (sum) out.set(a.u.uid, { shield: Math.min(C.handshakeCap, sum), with: w });
+  }
+  return out;
+}
+
+function unitToken(u: UnitInst, size: number, hs?: { shield: number }) {
   const sel = (selected?.kind === 'unit' || selected?.kind === 'equip') && selected.uid === u.uid;
   let tag = '';
   if (selected?.kind === 'item' && g) {
@@ -180,19 +224,21 @@ function unitToken(u: UnitInst, size: number) {
     }
   }
   const items = u.items.length ? `<span class="uitems">${u.items.map((it) => `<i>${ITEM_LABEL[it]}</i>`).join('')}</span>` : '';
+  const hand = hs ? `<span class="hstag" title="손잡기 방패">🤝${hs.shield}</span>` : '';
   return `<button class="unit ${sel ? 'sel' : ''}" data-action="unit" data-uid="${u.uid}" draggable="true">
-    <span class="stars">${stars(u.star)}</span>${charArt(u.char, size, { star: u.star, num: numberOf(u) })}<span class="nm">${esc(UNITS[u.char].name)}</span>${items}${tag}
+    <span class="stars">${stars(u.star)}</span>${charArt(u.char, size, { star: u.star, num: numberOf(u) })}<span class="nm">${esc(UNITS[u.char].name)}</span>${items}${tag}${hand}
   </button>`;
 }
 
 function boardHtml(p: PlayerState) {
+  const hs = handshakes(p);
   let html = '';
   for (const row of [0, 1] as const) {
     html += `<div class="rowlabel">${row === 0 ? '앞줄 (상대 쪽)' : '뒷줄'}</div>`;
     for (let col = 0; col < 5; col++) {
       const u = p.board.get(cellKey(row, col));
       const target = selected?.kind === 'unit' && !u ? 'target' : '';
-      html += `<div class="cell ${row === 0 ? 'front' : ''} ${target}" data-action="cell" data-row="${row}" data-col="${col}">${u ? unitToken(u, 54) : ''}</div>`;
+      html += `<div class="cell ${row === 0 ? 'front' : ''} ${target}" data-action="cell" data-row="${row}" data-col="${col}">${u ? unitToken(u, 54, hs.get(u.uid)) : ''}</div>`;
     }
   }
   return html;
@@ -254,6 +300,7 @@ function detailHtml(p: PlayerState) {
       <dt>약수</dt><dd><div class="divs">${d.map((x) => `<span>${x}</span>`).join('')}</div><small class="sub">${d.length}개${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}</small></dd>
       ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}💥 ${pair[0]} + ${pair[1]} (${pair[0]} × ${pair[1]} = ${num})</dd>` : ''}
       <dt>남은 카드</dt><dd>${g!.pool[char]}장 남음</dd>
+      ${owned && handshakes(p).get(owned.unit.uid) ? `<dt>손잡기</dt><dd>${handshakes(p).get(owned.unit.uid)!.with.map((w) => `🤝 ${num}${gwa(num)} ${w.num}: 최대공약수 ${w.g}`).join('<br>')}<br>→ 방패 <b>${handshakes(p).get(owned.unit.uid)!.shield}</b> <small class="sub">(최대공약수 × ${DEFAULT_CONFIG.handshakePerGcd})</small></dd>` : ''}
       <dt>아이템 칸</dt><dd class="islots">${slotsHtml}</dd>
     </dl>
     ${owned ? `<button class="btn" data-action="sell">팔기 (+${owned.value}골드)</button> <span class="sub">대기석·보드의 빈칸을 누르면 옮겨요</span>` : `<button class="btn gold" data-action="buy" data-i="${(selected as { index: number }).index}">사기 (${u.cost}골드)</button>`}
@@ -398,6 +445,9 @@ function modalHtml(): string {
       <h2>숫자체스: 합창 대작전</h2>
       ${loginBoxHtml()}
       <p>숫자 친구를 사 모아 덱을 짜요. <b>3번 친구는 3단 박(3·6·9…)에 노래</b>하고, 같은 박에 여럿이 노래하면 <b>합창!</b> 가문은 숫자가, 직업은 캐릭터가 정해요.</p>
+      ${tutorialDoneLocal() || myRecord()?.tutorial
+        ? '<p style="margin:6px 0"><button class="btn small ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>'
+        : '<button class="choice tutbtn" data-action="tutorial"><b class="jua" style="font-size:22px">📖 처음이라면: 튜토리얼 한 판</b><br>하나쌤과 5라운드 (약 7분) — 규칙을 하나씩 해 보며 배워요</button>'}
       <div class="diffs">컴퓨터 난이도
         ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 싸워 보고 골라요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
           .map(([d, nm, sub]) => `<button class="diff ${startDiff === d ? 'on' : ''}" data-action="diff" data-d="${d}"><b class="jua">${nm}</b><small>${sub}</small></button>`).join('')}
@@ -419,6 +469,7 @@ function modalHtml(): string {
       <div class="choices">${c.map((ch, i) => `<button class="choice" data-action="pick" data-i="${i}">${charArt(ch, 90)}<div class="jua" style="font-size:20px">${ch} ${esc(UNITS[ch].name)}</div><div class="row" style="justify-content:center;display:flex;gap:4px;flex-wrap:wrap">${chips(ch)}</div><div class="sub">♪ ${beatsOf(ch)}박</div></button>`).join('')}</div></div></div>`;
   }
   if (modal?.type === 'result') return resultHtml(modal.outcome);
+  if (tut?.finished) return tutorialEndHtml();
   const reward = g.pendingRewards.find((r) => r.playerId === p.id);
   if (g.phase === 'reward' && reward) {
     return `<div class="modal"><div class="box"><h2>보상 고르기</h2><p>몬스터 라운드 보상이에요. 하나를 골라요. ${reward.options.length > 3 ? '<b>(상자 하나 더!)</b>' : ''}</p>
@@ -480,7 +531,7 @@ function render() {
   const need = ECON.xpToNext[p.level];
   const center = battle
     ? `<div class="panel bv-host" id="bvhost"></div>`
-    : `<div class="panel opp">${scoutsHtml(p)}</div>
+    : `${tutDocked() ? `<div class="panel tut dock">${tutBubbleInner()}</div>` : `<div class="panel opp">${scoutsHtml(p)}</div>`}
       <div class="panel board">${boardHtml(p)}</div>
       <div class="cap">놓을 수 있는 자리 <b>${'●'.repeat(boardCount(p))}${'○'.repeat(Math.max(0, p.level - boardCount(p)))}</b> (레벨 ${p.level} → ${p.level}명) · 친구를 누르고 → 빈칸을 누르면 옮겨요</div>
       <div class="panel bench">${benchHtml(p)}</div>`;
@@ -518,6 +569,11 @@ function render() {
   ${modalHtml()}
   ${toastMsg ? `<div class="toast">${esc(toastMsg)}</div>` : ''}`;
   if (battle) document.getElementById('bvhost')?.appendChild(battle.root);
+  const step = tutStep();
+  if (step && tutBubbleVisible()) {
+    if (step.afterBattle) app.insertAdjacentHTML('beforeend', `<div class="tut float">${tutBubbleInner()}</div>`);
+    if (step.highlight) document.querySelectorAll(step.highlight).forEach((el) => el.classList.add('tut-hl'));
+  }
 }
 
 // ---------------- 행동 ----------------
@@ -556,7 +612,8 @@ function onReady() {
   unlockAudio();
   prepBots();
   const outcome = resolveRound(g);
-  botRewards(g);
+  if (tut) fixTutorialRewards(g);
+  else botRewards(g);
   selected = null;
   const p = me();
   myBoards.push(toBattleBoard(p));
@@ -584,6 +641,8 @@ function startBattle(outcome: RoundOutcome) {
     result: fight.result,
     side,
     oppName,
+    speed: tut ? 0.5 : undefined,
+    talk: tut ? tutorialTalk(outcome.round) : undefined,
     onDone: () => {
       battle?.stop();
       battle = null;
@@ -622,8 +681,28 @@ app.addEventListener('click', (ev) => {
     newGame(Number(el.dataset.bots), el.dataset.short === '1');
     return render();
   }
+  if (a === 'tutorial') {
+    startTutorial();
+    return render();
+  }
+  if (a === 'tutok' || a === 'quiz' || a === 'tutfinish' || a === 'tutread') {
+    tutorialAction(a, el);
+    return render();
+  }
   if (!g || battle) return; // 전투 중에는 전투 화면 버튼만
   const p = me();
+  if (tut) {
+    const char = a === 'buy' ? p.shop[Number(el.dataset.i)] ?? undefined : undefined;
+    const block = tutorialAllows(tutStep(), a, char);
+    if (block) {
+      toast(block);
+      return render();
+    }
+    if (a === 'next' && tutStep()?.afterBattle) {
+      toast('하나쌤 말풍선을 먼저 읽고 [알겠어]를 눌러 봐!');
+      return render();
+    }
+  }
   switch (a) {
     case 'scout': {
       const pid = Number(el.dataset.pid);
@@ -653,6 +732,7 @@ app.addEventListener('click', (ev) => {
     }
     case 'bagitem': {
       const i = Number(el.dataset.i);
+      if (tut) tut.selectedItem = p.bag[i];
       selected = (selected?.kind === 'item' || selected?.kind === 'equip') && selected.index === i ? null : { kind: 'item', index: i };
       break;
     }
@@ -708,7 +788,7 @@ app.addEventListener('click', (ev) => {
       selected = null;
       break;
     case 'reroll':
-      check(reroll(g, p));
+      if (check(reroll(g, p)) && tut) tut.rerolled = true;
       break;
     case 'xp':
       check(buyXp(p));
@@ -718,17 +798,22 @@ app.addEventListener('click', (ev) => {
       break;
     case 'ready':
       onReady();
+      if (tut && battle && tutStep()?.expect.kind === 'ready') nextTutStep();
       break;
     case 'pick':
       check(chooseFreePick(g, p, Number(el.dataset.i)));
       break;
     case 'next':
       modal = null;
-      if (g.phase === 'prep') advance(g);
+      if (g.phase === 'prep') {
+        advance(g);
+        if (tut) prepareTutorialRound(g);
+      }
       break;
     case 'reward':
       check(chooseReward(g, p.id, Number(el.dataset.i)));
       advance(g);
+      if (tut) prepareTutorialRound(g);
       break;
     case 'restart':
       g = null;
@@ -737,8 +822,153 @@ app.addEventListener('click', (ev) => {
   }
   prepBots();
   track();
+  tutorialCheck();
   render();
 });
+
+// ---------------- 튜토리얼 ----------------
+function startTutorial() {
+  battle?.stop();
+  battle = null;
+  g = createTutorial();
+  tut = { step: 0, rerolled: false, said: new Set() };
+  selected = null;
+  modal = null;
+  botsPreppedRound = -1;
+  bestChorus = null;
+  myBoards = [];
+  recordSaved = true; // 튜토리얼은 기록·유령에 넣지 않음
+}
+
+/** 다음 단계로: 이미 해 둔 상태면 글을 읽을 수 있게 [알겠어]로 바꾼다 */
+function nextTutStep() {
+  if (!tut || !g) return;
+  tut.step++;
+  tut.rerolled = false;
+  tut.selectedItem = undefined;
+  const s = tutStep();
+  tut.arrivedDone = !!s && !['ok', 'ready', 'selectItem', 'reroll'].includes(s.expect.kind) && stepDone(g, s, {});
+}
+
+/** 행동 단계가 이루어졌으면 다음 단계로(여러 개 한꺼번에도) */
+function tutorialCheck() {
+  if (!tut || !g) return;
+  for (;;) {
+    const s = tutStep();
+    if (!s || s.round !== g.round || ['ok', 'ready'].includes(s.expect.kind) || tut.arrivedDone) break;
+    if (!stepDone(g, s, { selectedItem: tut.selectedItem, rerolled: tut.rerolled })) break;
+    nextTutStep();
+  }
+}
+
+function tutBubbleVisible(): boolean {
+  const s = tutStep();
+  if (!s || !g || battle) return false;
+  if (s.afterBattle) return modal?.type === 'result';
+  return g.phase === 'prep' && !modal && s.round === g.round;
+}
+
+/** 준비 화면에서는 말풍선이 가운데 위(구경 줄 자리)에 끼어 들어가 아무것도 가리지 않는다 */
+const tutDocked = () => {
+  const s = tutStep();
+  return !!s && !s.afterBattle && tutBubbleVisible();
+};
+
+function tutBubbleInner(): string {
+  const s = tutStep()!;
+  const action = s.expect.kind === 'ok' || !!tut!.arrivedDone;
+  return `<div class="who">${charArt(1, 46, { noNumber: true, noGems: true })}</div>
+    <div class="txt">${esc(s.text)}${action ? '' : '<small>👆 반짝이는 곳을 눌러 해 봐!</small>'}</div>
+    <div class="btns"><span class="prog">${s.round}/5라운드 · ${tut!.step + 1}/${TUT_STEPS.length}</span>
+      <button class="btn small ghost" data-action="tutread" title="읽어 주기">🔊</button>${g && currentPlan(g)?.kind === 'pve' && s.id === 'boss' ? ' <button class="btn small ghost" data-action="scout" data-pid="-1">👀 로봇 판</button>' : ''}${action ? ' <button class="btn small gold" data-action="tutok">알겠어 ▶</button>' : ''}</div>`;
+}
+
+/** 전투 중 하나쌤 대사(라운드 대본) */
+function tutorialTalk(round: number) {
+  const talk: TutTalk[] = TUT_ROUNDS[round]?.talk ?? [];
+  return (beat: number, evs: import('../engine/types').BattleEvent[], v: { side: 0 | 1; result: import('../engine/battle').BattleResult }) => {
+    const out: string[] = [];
+    const team = (id: number) => v.result.fighters.find((f) => f.id === id)?.team;
+    talk.forEach((t, i) => {
+      const key = `${round}:${i}`;
+      if (tut?.said.has(key)) return;
+      const hit =
+        (t.beat !== undefined && t.beat === beat) ||
+        (t.on === 'rehearsal' && evs.some((e) => e.type === 'song' && e.rehearsal)) ||
+        (t.on === 'split' && evs.some((e) => e.type === 'split' && team(e.unit) !== v.side)) ||
+        (t.on === 'stunMine' && evs.some((e) => e.type === 'stun' && team(e.tgt) === v.side));
+      if (hit) {
+        tut?.said.add(key);
+        out.push(t.text);
+      }
+    });
+    return out;
+  };
+}
+
+function tutorialAction(a: string, el: HTMLElement) {
+  if (!tut) return;
+  if (a === 'tutread') {
+    const s = tutStep();
+    if (s) readAloud(s.text);
+    return;
+  }
+  if (a === 'tutok') {
+    const s = tutStep();
+    if (s?.expect.kind === 'ok' || tut.arrivedDone) nextTutStep();
+    if (tut.step >= TUT_STEPS.length) {
+      tut.finished = true;
+      tut.quiz = { i: 0, picked: null, score: 0 };
+      modal = null;
+    }
+    tutorialCheck();
+    return;
+  }
+  if (a === 'quiz' && tut.quiz) {
+    const q = tut.quiz;
+    if (q.picked === null) {
+      q.picked = Number(el.dataset.i);
+      if (q.picked === QUIZ[q.i].answer) q.score++;
+    } else {
+      q.i++;
+      q.picked = null;
+    }
+    return;
+  }
+  if (a === 'tutfinish') {
+    try {
+      localStorage.setItem('nc-tutorial-done', '1');
+    } catch {
+      /* 무시 */
+    }
+    void saveProgress({ tutorialDone: true });
+    const next = el.dataset.next;
+    tut = null;
+    g = null;
+    modal = { type: 'start' };
+    if (next === 'easy1') {
+      startDiff = 'easy';
+      newGame(1, false);
+    }
+  }
+}
+
+function tutorialEndHtml(): string {
+  const q = tut!.quiz!;
+  if (q.i < QUIZ.length) {
+    const item = QUIZ[q.i];
+    return `<div class="modal"><div class="box quiz"><h2>마무리 퀴즈 ${q.i + 1}/${QUIZ.length}</h2>
+      <div class="q">${esc(item.q)}</div>
+      <div class="opts">${item.choices.map((c, i) => `<button class="choice opt ${q.picked !== null ? (i === item.answer ? 'ok' : i === q.picked ? 'no' : '') : ''}" data-action="quiz" data-i="${i}">${esc(c)}</button>`).join('')}</div>
+      ${q.picked !== null ? `<div class="hl">${q.picked === item.answer ? '정답! ' : '아쉬워요. '}${esc(item.why)}</div><p><button class="btn gold" data-action="quiz">다음 ▶</button></p>` : ''}
+    </div></div>`;
+  }
+  return `<div class="modal"><div class="box"><h2>🎉 칭호: 합창단 새 단원!</h2>
+    <div class="hl">튜토리얼을 마쳤어요. 퀴즈 ${q.score}/${QUIZ.length}개 맞혔어요.</div>
+    <div class="hl tip">세 줄만 기억해! ① 3번 친구는 3단 박에 노래 ② 같은 박이면 합창 ③ 가문은 숫자가, 직업은 캐릭터가</div>
+    <p><button class="btn gold" data-action="tutfinish" data-next="easy1">컴퓨터 1명과 한 판 (쉬움) ▶</button> <button class="btn ghost" data-action="tutfinish">처음 화면</button></p>
+  </div></div>`;
+}
 
 /** 만난 친구·3성 모으기, 판이 끝나면 기록·유령 저장(들어가 있을 때만) */
 function track() {

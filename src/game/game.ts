@@ -58,7 +58,7 @@ function newPlayer(id: number, name: string, isBot: boolean, difficulty: PlayerS
 }
 
 export function createGame(opts: NewGameOptions): GameState {
-  const nBots = Math.max(1, Math.min(3, opts.bots ?? 3));
+  const nBots = Math.max(0, Math.min(3, opts.bots ?? 3)); // 0명은 튜토리얼(몬스터만)
   const diffs = Array.from({ length: nBots }, (_, i) => opts.difficulties?.[i] ?? opts.difficulty ?? 'easy');
   const used: Record<Difficulty, number> = { easy: 0, normal: 0, hard: 0 };
   const botNames = opts.botNames ?? diffs.map((d) => BOT_NAME[d][used[d]++ % 3]);
@@ -289,12 +289,25 @@ export function toBattleBoard(p: PlayerState): BoardUnit[] {
   });
 }
 
+/** 상점을 정해 둔 카드로(튜토리얼). 원래 상점 카드는 풀로 돌려준다 */
+export function setShop(g: GameState, p: PlayerState, chars: (number | null)[]) {
+  returnShop(g, p);
+  chars.slice(0, ECON.shopSize).forEach((c, i) => {
+    if (c !== null && g.pool[c] > 0) {
+      g.pool[c]--;
+      p.shop[i] = c;
+    }
+  });
+}
+
 // ---------------- 몬스터 ----------------
 export interface Monster {
   name: string;
   board: BoardUnit[];
 }
 export function monsterFor(g: GameState): Monster {
+  const scripted = g.monsters?.[g.round];
+  if (scripted) return scripted;
   const r = currentPlan(g).round;
   const pveIndex = g.rounds.filter((x) => x.kind === 'pve').findIndex((x) => x.round === r);
   const S = (char: number, star: Star, row: 0 | 1, col: number, extra: Partial<BoardUnit> = {}): BoardUnit => ({ char, star, row, col, ...extra });
