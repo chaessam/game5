@@ -1,5 +1,5 @@
 // 게임 화면: 상점·경제·합체·배치·라운드·메달, 가문/직업 판(늘 펼침), 두 겹 카드,
-// 상대 판 구경, 박자 전투 장면(소리). 아이템 끼우기는 4주차.
+// 상대 판 구경, 박자 전투 장면(소리), 숫자 돌·보물 끼우기(미리보기 3줄 + 30박).
 import './style.css';
 import { DEFAULT_CONFIG, FAMILIES, ROLES, UNITS, UNIT_IDS, tierOf } from '../engine/data';
 import { divisors, familiesOf, splitPair } from '../engine/math';
@@ -13,7 +13,11 @@ import {
 } from '../game/game';
 import { botFreePick, botPrep, botRewards } from '../game/bot';
 import { ECON, SHOP_ODDS } from '../game/economy';
-import type { BagItem, GameState, PlayerState, Slot } from '../game/types';
+import {
+  FAM_ORDER, ITEM_HELP, ITEM_LABEL, ITEM_NAME, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, previewEquip, secondSlotRound, slotCount,
+  synergyOf, unequip,
+} from '../game/items';
+import type { Difficulty, GameState, PlayerState, Slot, UnitInst } from '../game/types';
 import { ART, charArt, famIcon, roleIcon } from './art/chars';
 import { FAM_COLOR, ROLE_COLOR } from './art/parts';
 import { BattleView } from './battle-view';
@@ -22,23 +26,32 @@ import { battleInsight, momentText, type Moment } from './insight';
 
 // ---------------- 상태 ----------------
 let g: GameState | null = null;
-let selected: { kind: 'unit'; uid: number } | { kind: 'shop'; index: number } | { kind: 'scout'; pid: number } | null = null;
+let selected:
+  | { kind: 'unit'; uid: number }
+  | { kind: 'shop'; index: number }
+  | { kind: 'scout'; pid: number }
+  | { kind: 'item'; index: number }
+  | { kind: 'equip'; index: number; uid: number }
+  | null = null;
 let battle: BattleView | null = null;
 let botsPreppedRound = -1;
 /** 이번 판에서 만든 가장 큰 합창(게임 끝 '오늘의 수학 발견') */
 let bestChorus: (Moment & { round: number }) | null = null;
 let modal: { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | null = { type: 'start' };
+type StartDiff = Difficulty | 'mix';
+let startDiff: StartDiff = 'easy';
+try {
+  const v = localStorage.getItem('nc_diff');
+  if (v === 'easy' || v === 'normal' || v === 'hard' || v === 'mix') startDiff = v;
+} catch {
+  /* 기본 쉬움 */
+}
+const DIFF_LABEL: Record<Difficulty, string> = { easy: '쉬움', normal: '보통', hard: '어려움' };
 let toastMsg = '';
 let toastTimer = 0;
 const app = document.getElementById('app')!;
 const me = () => g!.players[0];
 
-const ITEM_NAME: Record<BagItem, string> = {
-  '+1': '더하기 돌 (+1)', '-1': '빼기 돌 (−1)', x2: '두 배 돌 (×2)', '/2': '반쪽 돌 (÷2)', x3: '세 배 돌 (×3)', '/3': '삼등분 돌 (÷3)',
-  mic: '합창 마이크', glove: '손잡기 장갑', bag: '분신 주머니',
-};
-const FAM_ORDER: FamilyId[] = ['even', 'tri', 'five', 'prime', 'rich'];
-const ROLE_ORDER: RoleId[] = ['knight', 'ninja', 'hunter', 'mage', 'singer', 'healer'];
 const COST_COLOR = ['', 'var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)'];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const stars = (n: number) => '★'.repeat(n);
@@ -53,25 +66,14 @@ function toast(msg: string) {
   }, 2200);
 }
 
-// ---------------- 시너지 계산(보드 위 서로 다른 숫자 / 서로 다른 캐릭터) ----------------
+// ---------------- 시너지 계산(보드 위 서로 다른 지금 숫자 / 서로 다른 캐릭터) ----------------
 function synergy(p: PlayerState) {
-  const boardNums = new Set<number>();
-  const benchNums = new Set<number>();
-  const boardChars = new Set<number>();
-  const benchChars = new Set<number>();
-  for (const u of p.board.values()) { boardNums.add(u.char); boardChars.add(u.char); }
-  for (const u of p.bench) if (u) { benchNums.add(u.char); benchChars.add(u.char); }
-  const fam = {} as Record<FamilyId, { count: number; tier: number }>;
-  for (const f of FAM_ORDER) {
-    const count = [...boardNums].filter((n) => familiesOf(n).includes(f)).length;
-    fam[f] = { count, tier: tierOf(count, DEFAULT_CONFIG.famTiers[f]) };
-  }
-  const role = {} as Record<RoleId, { count: number; tier: number }>;
-  for (const r of ROLE_ORDER) {
-    const count = [...boardChars].filter((c) => UNITS[c].role === r).length;
-    role[r] = { count, tier: tierOf(count, DEFAULT_CONFIG.roleTiers) };
-  }
-  return { fam, role, boardNums, benchNums, boardChars, benchChars };
+  const s = synergyOf([...p.board.values()]);
+  const bench = p.bench.filter((u): u is UnitInst => u !== null);
+  return {
+    fam: s.fam, role: s.role, boardNums: s.nums, boardChars: s.chars,
+    benchNums: new Set(bench.map(numberOf)), benchChars: new Set(bench.map((u) => u.char)),
+  };
 }
 
 function famEffect(f: FamilyId, tierIdx: number): string {
@@ -102,11 +104,13 @@ function synPanels(p: PlayerState) {
     const { count, tier } = s.fam[f];
     const tiers = DEFAULT_CONFIG.famTiers[f];
     const members = UNIT_IDS.filter((n) => familiesOf(n).includes(f));
+    // 돌로 생긴 로스터 밖 숫자는 점선 칩
+    const extra = [...s.boardNums, ...s.benchNums].filter((n, i, a) => !UNIT_IDS.includes(n) && familiesOf(n).includes(f) && a.indexOf(n) === i);
     return `<div class="syn ${tier ? 'on' : ''}" style="--c:${FAM_COLOR[f]}">
       <div class="synhead">${famIcon(f, 20)}<span class="nm">${FAMILIES[f].name}</span><span class="cnt">${count}명</span></div>
       <div class="rule">${esc(FAMILIES[f].rule)}</div>
       <div class="steps">${tiers.map((t, i) => `<span class="${count >= t ? 'lit' : ''}">${t}명 ${famEffect(f, i)}</span>`).join('')}</div>
-      <div class="members">${members.map((n) => `<span class="${s.boardNums.has(n) ? 'mb-on' : s.benchNums.has(n) ? 'mb-wait' : ''}">${n}</span>`).join('')}</div>
+      <div class="members">${members.map((n) => `<span class="${s.boardNums.has(n) ? 'mb-on' : s.benchNums.has(n) ? 'mb-wait' : ''}">${n}</span>`).join('')}${extra.map((n) => `<span class="mb-stone ${s.boardNums.has(n) ? 'mb-on' : 'mb-wait'}" title="숫자 돌로 생긴 숫자">${n}</span>`).join('')}</div>
     </div>`;
   }).join('');
   const roleRows = ROLE_ORDER.map((r) => {
@@ -157,10 +161,19 @@ function shopCard(p: PlayerState, i: number) {
   </button>`;
 }
 
-function unitToken(uid: number, char: number, star: number, size: number) {
-  const sel = selected?.kind === 'unit' && selected.uid === uid;
-  return `<button class="unit ${sel ? 'sel' : ''}" data-action="unit" data-uid="${uid}" draggable="true">
-    <span class="stars">${stars(star)}</span>${charArt(char, size, { star: star as 1 | 2 | 3 })}<span class="nm">${esc(UNITS[char].name)}</span>
+function unitToken(u: UnitInst, size: number) {
+  const sel = (selected?.kind === 'unit' || selected?.kind === 'equip') && selected.uid === u.uid;
+  let tag = '';
+  if (selected?.kind === 'item' && g) {
+    const item = me().bag[selected.index];
+    if (item !== undefined) {
+      const pv = previewEquip(g, me(), u, item);
+      tag = pv.ok ? `<span class="pvtag ok">${pv.from === pv.to ? '✓' : `→${pv.to}`}</span>` : '<span class="pvtag no">✕</span>';
+    }
+  }
+  const items = u.items.length ? `<span class="uitems">${u.items.map((it) => `<i>${ITEM_LABEL[it]}</i>`).join('')}</span>` : '';
+  return `<button class="unit ${sel ? 'sel' : ''}" data-action="unit" data-uid="${u.uid}" draggable="true">
+    <span class="stars">${stars(u.star)}</span>${charArt(u.char, size, { star: u.star, num: numberOf(u) })}<span class="nm">${esc(UNITS[u.char].name)}</span>${items}${tag}
   </button>`;
 }
 
@@ -171,7 +184,7 @@ function boardHtml(p: PlayerState) {
     for (let col = 0; col < 5; col++) {
       const u = p.board.get(cellKey(row, col));
       const target = selected?.kind === 'unit' && !u ? 'target' : '';
-      html += `<div class="cell ${row === 0 ? 'front' : ''} ${target}" data-action="cell" data-row="${row}" data-col="${col}">${u ? unitToken(u.uid, u.char, u.star, 54) : ''}</div>`;
+      html += `<div class="cell ${row === 0 ? 'front' : ''} ${target}" data-action="cell" data-row="${row}" data-col="${col}">${u ? unitToken(u, 54) : ''}</div>`;
     }
   }
   return html;
@@ -181,7 +194,7 @@ function benchHtml(p: PlayerState) {
   return p.bench
     .map((u, i) => {
       const target = selected?.kind === 'unit' && !u ? 'target' : '';
-      return `<div class="cell ${target}" data-action="benchslot" data-i="${i}">${u ? unitToken(u.uid, u.char, u.star, 42) : ''}</div>`;
+      return `<div class="cell ${target}" data-action="benchslot" data-i="${i}">${u ? unitToken(u, 42) : ''}</div>`;
     })
     .join('');
 }
@@ -189,9 +202,11 @@ function benchHtml(p: PlayerState) {
 function detailHtml(p: PlayerState) {
   if (!selected) return '';
   if (selected.kind === 'scout') return scoutHtml(selected.pid);
+  if (selected.kind === 'item') return itemHtml(p, selected.index);
+  if (selected.kind === 'equip') return equipHtml(p, selected.index, selected.uid);
   let char: number;
   let star = 1;
-  let owned: { uid: number; value: number } | null = null;
+  let owned: { uid: number; value: number; unit: UnitInst } | null = null;
   if (selected.kind === 'shop') {
     const c = p.shop[selected.index];
     if (c === null) return '';
@@ -201,29 +216,91 @@ function detailHtml(p: PlayerState) {
     if (!f) return '';
     char = f.unit.char;
     star = f.unit.star;
-    owned = { uid: f.unit.uid, value: sellValue(f.unit) };
+    owned = { uid: f.unit.uid, value: sellValue(f.unit), unit: f.unit };
   }
   const u = UNITS[char];
-  const d = divisors(char);
-  const pair = splitPair(char);
-  const fams = familiesOf(char);
+  const num = owned ? numberOf(owned.unit) : char;
+  const d = divisors(num);
+  const pair = splitPair(num);
+  const fams = familiesOf(num);
+  const open = slotCount(g!);
+  const slotsHtml = owned
+    ? [0, 1].map((i) => {
+        const it = owned!.unit.items[i];
+        if (it !== undefined) return `<span class="islot full" title="${esc(ITEM_HELP[it])}">${ITEM_LABEL[it]} ${esc(ITEM_NAME[it])} <button class="btn small ghost" data-action="unequip" data-slot="${i}">빼기</button></span>`;
+        return i < open ? '<span class="islot">빈 칸 — 가방의 돌을 눌러 끼워요</span>' : `<span class="islot lock">🔒 ${secondSlotRound(g!)}라운드에 열려요</span>`;
+      }).join('')
+    : '<span class="sub">사서 데려오면 칸 2개(두 번째는 6라운드부터)</span>';
   return `<aside class="drawer">
     <button class="btn small ghost close" data-action="close">닫기</button>
-    <div style="display:flex;gap:10px;align-items:center">${charArt(char, 84, { star: star as 1 | 2 | 3 })}
-      <div><h3>${char} ${esc(u.name)}</h3><div class="sub">${esc(u.title)} · ${star}성 · ${u.cost}골드</div><div class="sub">"${esc(u.line)}"</div></div></div>
+    <div style="display:flex;gap:10px;align-items:center">${charArt(char, 84, { star: star as 1 | 2 | 3, num })}
+      <div><h3>${num !== char ? `${char} → <span style="color:#ffe27a">${num}</span>` : char} ${esc(u.name)}</h3><div class="sub">${esc(u.title)} · ${star}성 · ${u.cost}골드</div><div class="sub">"${esc(u.line)}"</div></div></div>
     <dl>
       <dt>가문</dt><dd>${fams.length ? fams.map((f) => `<div>${famIcon(f, 14)} <b>${FAMILIES[f].name}</b> — ${esc(FAMILIES[f].rule)}</div>`).join('') : '없음 (1은 2·3·5의 배수가 아니에요)'}</dd>
       <dt>직업</dt><dd>${roleIcon(u.role, 14)} <b>${ROLES[u.role].name}</b> — ${esc(ROLES[u.role].rule)}</dd>
       <dt>숨은 숫자</dt><dd>${esc(ART[char].hide)}</dd>
-      <dt>노래 박</dt><dd>♪ ${[1, 2, 3, 4, 5].map((k) => char * k).filter((b) => b <= 48).join('·')}박 (${char}의 배수)</dd>
-      <dt>노래</dt><dd>${esc(songText(u))}<br><small class="sub">값은 1성 / 2성 / 3성</small></dd>
+      ${num !== char ? `<dt>지금 숫자</dt><dd>${esc(owned ? numberExpr(owned.unit) : '')} <small class="sub">(모습·직업·성은 그대로)</small></dd>` : ''}
+      <dt>노래 박</dt><dd>♪ ${[1, 2, 3, 4, 5].map((k) => num * k).filter((b) => b <= 48).join('·')}박 (${num}의 배수)</dd>
+      <dt>노래</dt><dd>${esc(songText({ ...u, n: num }))}<br><small class="sub">값은 1성 / 2성 / 3성</small></dd>
       <dt>체력·공격</dt><dd>${u.hp * star} · ${u.atk * star} (${star}성)</dd>
       <dt>약수</dt><dd><div class="divs">${d.map((x) => `<span>${x}</span>`).join('')}</div><small class="sub">${d.length}개${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}</small></dd>
-      ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}💥 ${pair[0]} + ${pair[1]} (${pair[0]} × ${pair[1]} = ${char})</dd>` : ''}
+      ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}💥 ${pair[0]} + ${pair[1]} (${pair[0]} × ${pair[1]} = ${num})</dd>` : ''}
       <dt>남은 카드</dt><dd>${g!.pool[char]}장 남음</dd>
-      <dt>아이템 칸</dt><dd>2칸 (끼우기는 곧 열려요)</dd>
+      <dt>아이템 칸</dt><dd class="islots">${slotsHtml}</dd>
     </dl>
     ${owned ? `<button class="btn" data-action="sell">팔기 (+${owned.value}골드)</button> <span class="sub">대기석·보드의 빈칸을 누르면 옮겨요</span>` : `<button class="btn gold" data-action="buy" data-i="${(selected as { index: number }).index}">사기 (${u.cost}골드)</button>`}
+  </aside>`;
+}
+
+// ---------------- 숫자 돌 ----------------
+function numberExpr(u: UnitInst): string {
+  return checkItems(u.char, u.items).expr;
+}
+
+function itemHtml(p: PlayerState, index: number): string {
+  const it = p.bag[index];
+  if (it === undefined) return '';
+  return `<aside class="drawer small">
+    <button class="btn small ghost close" data-action="close">닫기</button>
+    <h3>${ITEM_LABEL[it]} ${esc(ITEM_NAME[it])}</h3>
+    <div class="sub">${esc(ITEM_HELP[it])}</div>
+    <p>끼울 친구를 눌러요. 친구 위에 <b class="pvtag ok" style="position:static">→10</b> 처럼 바뀔 숫자가 보이고, <b class="pvtag no" style="position:static">✕</b>는 끼울 수 없어요.</p>
+    <div class="sub">준비 시간에는 언제든 공짜로 빼고 바꿀 수 있어요. 돌은 써도 없어지지 않아요.</div>
+  </aside>`;
+}
+
+function famChangeText(c: { fam: FamilyId; before: number; after: number; tierBefore: number; tierAfter: number }) {
+  const tiers = DEFAULT_CONFIG.famTiers[c.fam];
+  const note = c.tierAfter > c.tierBefore ? `<b class="up">(${tiers[c.tierAfter - 1]}명 효과 켜짐!)</b>` : c.tierAfter < c.tierBefore ? `<b class="down">(${tiers[c.tierBefore - 1]}명 효과 꺼짐)</b>` : '(효과는 그대로)';
+  return `<div>${famIcon(c.fam, 14)} ${FAMILIES[c.fam].name} ${c.before}명 → ${c.after}명 ${note}</div>`;
+}
+
+function equipHtml(p: PlayerState, index: number, uid: number): string {
+  const it = p.bag[index];
+  const f = findUnit(p, uid);
+  if (it === undefined || !f) return '';
+  const u = f.unit;
+  const pv = previewEquip(g!, p, u, it);
+  const head = `<button class="btn small ghost close" data-action="close">닫기</button>
+    <h3>${ITEM_LABEL[it]} ${esc(ITEM_NAME[it])} → ${esc(UNITS[u.char].name)}</h3>`;
+  if (!pv.ok) {
+    return `<aside class="drawer">${head}<div class="pv-big bad">✕ 끼울 수 없어요</div><div class="hl">${esc(pv.reason ?? '')}</div>
+      <button class="btn ghost" data-action="close">다른 친구 고르기</button></aside>`;
+  }
+  const gems = pv.gained.map((x) => `<span class="chip" style="color:${FAM_COLOR[x]}">+ ${famIcon(x, 13)}${FAMILIES[x].name}</span>`)
+    .concat(pv.lost.map((x) => `<span class="chip lost" style="color:${FAM_COLOR[x]}">− ${famIcon(x, 13)}${FAMILIES[x].name}</span>`)).join(' ');
+  const song = pv.song
+    ? `<div class="pv-song">30박 동안: 노래 ${pv.song.before[0]}번 × ${pv.song.before[1]} = <b>${pv.song.before[0] * pv.song.before[1]}</b> → ${pv.song.after[0]}번 × ${pv.song.after[1]} = <b>${pv.song.after[0] * pv.song.after[1]}</b><br><small>(30 ÷ 숫자 = 노래 횟수, 숫자 × ${UNITS[u.char].coef}${u.star > 1 ? ` × ${u.star}성` : ''} = 한 번 크기)</small></div>`
+    : '';
+  return `<aside class="drawer">${head}
+    <div class="pv-arts">${charArt(u.char, 74, { star: u.star, num: pv.from })}<span class="pv-big">${pv.from} → ${pv.to}</span>${charArt(u.char, 74, { star: u.star, num: pv.to })}</div>
+    <div class="sub" style="text-align:center">${esc(pv.expr)}</div>
+    <div class="pv-line"><b>① 이 친구 보석</b> ${gems || '<span class="sub">보석은 그대로</span>'}</div>
+    <div class="pv-line"><b>② 가문 판</b> ${pv.onBoard ? (pv.board.length ? pv.board.map(famChangeText).join('') : '<span class="sub">바뀌는 줄이 없어요</span>') : '<span class="sub">대기석 친구는 가문에 세지 않아요(보드에 올리면 세요)</span>'}</div>
+    <div class="pv-line"><b>③ 노래</b> ♪ ${[1, 2, 3].map((k) => pv.to * k).join('·')}…박</div>
+    ${song}
+    ${pv.warnings.map((w) => `<div class="pv-warn">⚠ ${esc(w)}</div>`).join('')}
+    <p><button class="btn gold" data-action="equipok">끼우기</button> <button class="btn ghost" data-action="close">취소</button></p>
   </aside>`;
 }
 
@@ -244,10 +321,11 @@ function scoutsHtml(p: PlayerState) {
     const av = top ? charArt(top.char, 30, { star: top.star, noNumber: true, noGems: true }) : '<span style="width:30px;text-align:center">🙂</span>';
     const vs = q.id === vsId;
     const tag = vs ? `<em>${o?.kind === 'pvp' && o.mirror ? '거울 상대' : '이번 상대'}</em>` : '';
-    return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name)}</span>${tag}</button>`;
+    const diff = q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : '';
+    return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
-  return `<div class="scouts">${items.join('')}</div><span class="sub" style="color:var(--muted)">얼굴을 누르면 그 판을 구경해요</span>`;
+  return `<div class="scouts" title="얼굴을 누르면 그 판을 구경해요">${items.join('')}</div><span class="sub" style="color:var(--muted);flex:none">👀 눌러서 구경</span>`;
 }
 
 function scoutHtml(pid: number): string {
@@ -311,12 +389,16 @@ function modalHtml(): string {
     return `<div class="modal"><div class="box">
       <h2>숫자체스: 합창 대작전</h2>
       <p>숫자 친구를 사 모아 덱을 짜요. <b>3번 친구는 3단 박(3·6·9…)에 노래</b>하고, 같은 박에 여럿이 노래하면 <b>합창!</b> 가문은 숫자가, 직업은 캐릭터가 정해요.</p>
+      <div class="diffs">컴퓨터 난이도
+        ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 싸워 보고 골라요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
+          .map(([d, nm, sub]) => `<button class="diff ${startDiff === d ? 'on' : ''}" data-action="diff" data-d="${d}"><b class="jua">${nm}</b><small>${sub}</small></button>`).join('')}
+      </div>
       <div class="choices">
         <button class="choice" data-action="start" data-bots="3" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 3명과</b><br>12라운드 (약 12분)</button>
         <button class="choice" data-action="start" data-bots="1" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 1명과</b><br>12라운드</button>
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 (약 8분)</button>
       </div>
-      <p class="sub" style="color:var(--muted)">시험판: 컴퓨터는 아직 '쉬움'이에요. 숫자 돌 끼우기는 곧 열려요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a></p>
+      <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a></p>
     </div></div>`;
   }
   if (battle) return '';
@@ -416,7 +498,8 @@ function render() {
           <button class="btn ${p.shopLocked ? 'on' : 'ghost'}" data-action="lock">${p.shopLocked ? '🔒 잠김' : '🔓 잠금'}</button>
         </div>
         <div class="odds">레벨 ${p.level} 상점: ${odds}</div>
-        <div class="bag">가방 (${p.bag.length}/${ECON.bagSize}): ${p.bag.length ? p.bag.map((b) => ITEM_NAME[b]).join(', ') : '비어 있음'}</div>
+        <div class="bag">가방 (${p.bag.length}/${ECON.bagSize}) <span class="sub" style="color:var(--muted)">${p.bag.length ? '돌을 누르고 → 친구를 눌러요' : '몬스터를 이기면 돌을 받아요'}</span>
+          <div class="bagitems">${p.bag.map((it, i) => `<button class="item ${isStoneItem(it) ? 'stone' : 'treasure'} ${(selected?.kind === 'item' || selected?.kind === 'equip') && selected.index === i ? 'sel' : ''}" data-action="bagitem" data-i="${i}" draggable="true" title="${esc(ITEM_NAME[it])}: ${esc(ITEM_HELP[it])}">${ITEM_LABEL[it]}</button>`).join('')}</div></div>
         <div class="sellzone" data-action="sellzone">여기로 끌어 놓으면 팔기 (산 값 그대로)</div>
       </div>
     </footer>
@@ -434,7 +517,9 @@ function check(r: { ok: boolean; reason?: string }) {
 }
 
 function newGame(bots: number, short: boolean) {
-  g = createGame({ seed: (Date.now() ^ (Math.random() * 1e9)) >>> 0, bots, short });
+  const mix: Difficulty[] = ['easy', 'normal', 'hard'];
+  const difficulties = Array.from({ length: bots }, (_, i) => (startDiff === 'mix' ? mix[i % 3] : startDiff));
+  g = createGame({ seed: (Date.now() ^ (Math.random() * 1e9)) >>> 0, bots, short, difficulties });
   for (const p of g.players) if (p.isBot) botFreePick(g, p);
   selected = null;
   modal = null;
@@ -502,6 +587,15 @@ app.addEventListener('click', (ev) => {
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]');
   if (!el) return;
   const a = el.dataset.action!;
+  if (a === 'diff') {
+    startDiff = el.dataset.d as StartDiff;
+    try {
+      localStorage.setItem('nc_diff', startDiff);
+    } catch {
+      /* 무시 */
+    }
+    return render();
+  }
   if (a === 'start') {
     newGame(Number(el.dataset.bots), el.dataset.short === '1');
     return render();
@@ -535,8 +629,37 @@ app.addEventListener('click', (ev) => {
       }
       break;
     }
+    case 'bagitem': {
+      const i = Number(el.dataset.i);
+      selected = (selected?.kind === 'item' || selected?.kind === 'equip') && selected.index === i ? null : { kind: 'item', index: i };
+      break;
+    }
+    case 'equipok':
+      if (selected?.kind === 'equip') {
+        const f = findUnit(p, selected.uid);
+        const before = f ? numberOf(f.unit) : 0;
+        if (f) {
+          const r = equip(g, p, f.unit, selected.index);
+          if (r.ok) {
+            const after = numberOf(f.unit);
+            toast(before === after ? `${UNITS[f.unit.char].name}에게 끼웠어요` : `${UNITS[f.unit.char].name}: ${before} → ${after}!`);
+            selected = { kind: 'unit', uid: f.unit.uid };
+          } else toast(r.reason);
+        }
+      }
+      break;
+    case 'unequip':
+      if (selected?.kind === 'unit') {
+        const f = findUnit(p, selected.uid);
+        if (f) check(unequip(p, f.unit, Number(el.dataset.slot)));
+      }
+      break;
     case 'unit': {
       const uid = Number(el.dataset.uid);
+      if (selected?.kind === 'item' || selected?.kind === 'equip') {
+        selected = { kind: 'equip', index: selected.index, uid };
+        break;
+      }
       if (selected?.kind === 'unit' && selected.uid !== uid) {
         // 다른 친구를 누르면 자리 바꾸기
         const target = findUnit(p, uid);
@@ -596,6 +719,11 @@ app.addEventListener('click', (ev) => {
 
 // 마우스 끌어 놓기(태블릿은 누르기 → 누르기)
 app.addEventListener('dragstart', (ev) => {
+  const it = (ev.target as HTMLElement).closest<HTMLElement>('[data-action="bagitem"]');
+  if (it && ev.dataTransfer) {
+    ev.dataTransfer.setData('text/plain', `item:${it.dataset.i}`);
+    return;
+  }
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-uid]');
   if (el && ev.dataTransfer) ev.dataTransfer.setData('text/plain', el.dataset.uid!);
 });
@@ -605,8 +733,17 @@ app.addEventListener('dragover', (ev) => {
 });
 app.addEventListener('drop', (ev) => {
   ev.preventDefault();
-  if (!g) return;
-  const uid = Number(ev.dataTransfer?.getData('text/plain'));
+  if (!g || battle) return;
+  const data = ev.dataTransfer?.getData('text/plain') ?? '';
+  if (data.startsWith('item:')) {
+    const target = (ev.target as HTMLElement).closest<HTMLElement>('[data-action="unit"]');
+    if (target) {
+      selected = { kind: 'equip', index: Number(data.slice(5)), uid: Number(target.dataset.uid) };
+      render();
+    }
+    return;
+  }
+  const uid = Number(data);
   if (!uid) return;
   const p = me();
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]');

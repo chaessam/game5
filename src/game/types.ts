@@ -1,4 +1,16 @@
-import type { ItemId, Star, StoneOp, TreasureId } from '../engine/types';
+import type { FamilyId, ItemId, RoleId, Star, StoneOp, TreasureId } from '../engine/types';
+
+export type Difficulty = 'easy' | 'normal' | 'hard';
+
+/** 컴퓨터의 기억(목표 가문·직업·덱, 일부러 비운 칸) */
+export interface BotMemory {
+  fam?: FamilyId;
+  role?: RoleId;
+  deck?: string;
+  /** 시뮬레이션용: 덱을 바꾸지 않음 */
+  lockDeck?: boolean;
+  keepEmpty?: boolean;
+}
 
 /** 플레이어가 가진 친구 한 명 */
 export interface UnitInst {
@@ -19,7 +31,8 @@ export interface PlayerState {
   id: number;
   name: string;
   isBot: boolean;
-  difficulty: 'easy' | 'normal' | 'hard';
+  difficulty: Difficulty;
+  ai?: BotMemory;
   gold: number;
   level: number;
   xp: number;

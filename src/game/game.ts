@@ -5,7 +5,8 @@ import { UNITS, unitDef } from '../engine/data';
 import { runBattle, type BattleResult } from '../engine/battle';
 import type { BoardUnit, Star, StoneOp, TreasureId } from '../engine/types';
 import { ECON, MEDALS, POOL, SHOP_ODDS, copiesOfStar } from './economy';
-import type { BagItem, GameState, PendingReward, PlayerState, RoundPlan, Slot, UnitInst } from './types';
+import { fitItems } from './items';
+import type { BagItem, Difficulty, GameState, PendingReward, PlayerState, RoundPlan, Slot, UnitInst } from './types';
 
 // ---------------- 난수 ----------------
 export function rand(g: GameState): number {
@@ -33,9 +34,19 @@ export interface NewGameOptions {
   humanName?: string;
   bots?: number; // 1~3
   botNames?: string[];
-  difficulty?: 'easy' | 'normal' | 'hard';
+  difficulty?: Difficulty;
+  /** 컴퓨터마다 난이도(없으면 difficulty) */
+  difficulties?: Difficulty[];
+  /** 시뮬레이션용: 0번 자리도 컴퓨터(이 난이도) */
+  seatZeroBot?: Difficulty;
   short?: boolean;
 }
+
+export const BOT_NAME: Record<Difficulty, string[]> = {
+  easy: ['똑딱이', '말랑이', '데굴이'],
+  normal: ['척척이', '반짝이', '쑥쑥이'],
+  hard: ['번뜩이', '쌩쌩이', '우뚝이'],
+};
 
 function newPlayer(id: number, name: string, isBot: boolean, difficulty: PlayerState['difficulty']): PlayerState {
   return {
@@ -48,15 +59,17 @@ function newPlayer(id: number, name: string, isBot: boolean, difficulty: PlayerS
 
 export function createGame(opts: NewGameOptions): GameState {
   const nBots = Math.max(1, Math.min(3, opts.bots ?? 3));
-  const botNames = opts.botNames ?? ['똑딱이', '척척이', '번뜩이'];
+  const diffs = Array.from({ length: nBots }, (_, i) => opts.difficulties?.[i] ?? opts.difficulty ?? 'easy');
+  const used: Record<Difficulty, number> = { easy: 0, normal: 0, hard: 0 };
+  const botNames = opts.botNames ?? diffs.map((d) => BOT_NAME[d][used[d]++ % 3]);
   const pool: Record<number, number> = {};
   for (const tier of Object.values(POOL)) for (const u of tier.units) pool[u] = tier.copies;
   const g: GameState = {
     seed: opts.seed, rngState: opts.seed >>> 0, round: 0, rounds: roundPlans(opts.short), phase: 'prep',
-    players: [newPlayer(0, opts.humanName ?? '나', false, 'easy')],
+    players: [newPlayer(0, opts.seatZeroBot ? `컴퓨터 ${BOT_NAME[opts.seatZeroBot][2]}` : (opts.humanName ?? '나'), !!opts.seatZeroBot, opts.seatZeroBot ?? 'easy')],
     pool, nextUid: 1, freePick: {}, pendingRewards: [], monsterIndex: 0, log: [],
   };
-  for (let i = 0; i < nBots; i++) g.players.push(newPlayer(i + 1, `컴퓨터 ${botNames[i] ?? i + 1}`, true, opts.difficulty ?? 'easy'));
+  for (let i = 0; i < nBots; i++) g.players.push(newPlayer(i + 1, `컴퓨터 ${botNames[i] ?? i + 1}`, true, diffs[i]));
   startRound(g);
   return g;
 }
@@ -148,10 +161,10 @@ export function mergeAll(g: GameState, p: PlayerState, char: number): UnitInst |
       });
       if (found.length < 3) continue;
       const three = found.slice(0, 3);
-      const items = three.flatMap((f) => f.unit.items);
+      const { keep, extra } = fitItems(g, char, three.flatMap((f) => f.unit.items));
       three.forEach((f) => removeAt(p, f.slot));
-      merged = { uid: g.nextUid++, char, star: (star + 1) as Star, items: items.slice(0, 2) };
-      addToBag(p, items.slice(2) as BagItem[]);
+      merged = { uid: g.nextUid++, char, star: (star + 1) as Star, items: keep };
+      addToBag(p, extra as BagItem[]);
       putAt(p, three[0].slot, merged);
       break;
     }
@@ -252,6 +265,7 @@ export function move(p: PlayerState, uid: number, to: Slot): ActionResult {
 
 /** 준비가 끝났는데 보드에 빈자리가 있으면 대기석 친구를 자동으로 올린다(값 × 성이 큰 순). */
 export function autoFill(p: PlayerState) {
+  if (p.ai?.keepEmpty) return; // 쉬움 컴퓨터가 일부러 비운 칸
   const bench = p.bench
     .map((u, i) => ({ u, i }))
     .filter((x): x is { u: UnitInst; i: number } => x.u !== null)
