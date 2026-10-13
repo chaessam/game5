@@ -22,10 +22,10 @@ function give(g: GameState, p: PlayerState, char: number, n = 1) {
 }
 
 describe('경제 표', () => {
-  it('상점 확률 각 줄 합 100, 카드 풀 326장', () => {
+  it('상점 확률 각 줄 합 100, 카드 풀 328장', () => {
     for (const row of Object.values(SHOP_ODDS)) expect(row.reduce((a, b) => a + b)).toBe(100);
     const total = Object.values(POOL).reduce((s, t) => s + t.units.length * t.copies, 0);
-    expect(total).toBe(326);
+    expect(total).toBe(328);
     for (const [cost, t] of Object.entries(POOL)) for (const u of t.units) expect(UNITS[u].cost).toBe(Number(cost));
   });
 
@@ -53,18 +53,18 @@ describe('경제 표', () => {
 });
 
 describe('상점·사기·팔기·합체', () => {
-  it('카드 수가 보존된다(풀 + 상점 + 손에 든 것 = 326)', () => {
+  it('카드 수가 보존된다(풀 + 상점 + 손에 든 것 = 328)', () => {
     const g = createGame({ seed: 7, bots: 3 });
     g.players.forEach((p) => botFreePick(g, p));
-    expect(totalPool(g) + inPlay(g)).toBe(326);
+    expect(totalPool(g) + inPlay(g)).toBe(328);
     const p = g.players[0];
     p.gold = 50;
     for (let i = 0; i < 5; i++) buy(g, p, i);
     reroll(g, p);
-    expect(totalPool(g) + inPlay(g)).toBe(326);
+    expect(totalPool(g) + inPlay(g)).toBe(328);
     const u = allUnits(p)[0];
     sell(g, p, u.uid);
-    expect(totalPool(g) + inPlay(g)).toBe(326);
+    expect(totalPool(g) + inPlay(g)).toBe(328);
   });
 
   it('같은 친구 3장 → 2성, 2성 3장 → 3성(연쇄), 보드 자리에 남는다', () => {
@@ -161,7 +161,7 @@ describe('한 판 전체', () => {
     expect(g1.phase).toBe('over');
     expect(g1.round).toBe(12);
     expect(g1.players.map((p) => p.medals)).toEqual(g2.players.map((p) => p.medals));
-    expect(totalPool(g1) + inPlay(g1)).toBe(326);
+    expect(totalPool(g1) + inPlay(g1)).toBe(328);
     for (const p of g1.players) {
       expect(p.history.length).toBe(12);
       expect(p.medals).toBeGreaterThanOrEqual(12); // 져도 매 라운드 메달 1개 이상

@@ -6,8 +6,15 @@ import { advance, createGame, ranking, resolveRound } from '../src/game/game';
 import { botFreePick, botPrep, botRewards } from '../src/game/bot';
 import { numberOf } from '../src/game/items';
 import type { Difficulty, GameState } from '../src/game/types';
+import { DEFAULT_CONFIG } from '../src/engine/data';
 
 const args = process.argv.slice(2);
+// 실험: --set chorusPct=[100,100,150,215,250] 처럼 밸런스 수치를 바꿔 본다(파일은 그대로)
+for (const a of args.filter((x) => x.startsWith('--set'))) {
+  const [k, v] = a.slice(6).split('=');
+  (DEFAULT_CONFIG as unknown as Record<string, unknown>)[k] = JSON.parse(v);
+  console.log(`실험 수치: ${k} = ${v}`);
+}
 const N = Number(args.find((a) => /^\d+$/.test(a)) ?? 60);
 const short = args.includes('--short');
 

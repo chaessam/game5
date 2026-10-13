@@ -38,8 +38,8 @@ export const SHOP_ODDS: Record<number, [number, number, number, number, number]>
 export const POOL: Record<number, { units: number[]; copies: number }> = {
   1: { units: [2, 3, 4, 5, 6, 7], copies: 18 },
   2: { units: [8, 9, 10, 11, 15, 16], copies: 15 },
-  3: { units: [12, 13, 17, 18, 21], copies: 12 },
-  4: { units: [1, 20, 24, 25, 28], copies: 10 },
+  3: { units: [1, 12, 13, 17, 18, 21], copies: 12 },
+  4: { units: [20, 24, 25, 28], copies: 10 },
   5: { units: [30, 36], copies: 9 },
 };
 

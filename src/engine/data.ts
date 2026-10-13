@@ -4,7 +4,7 @@
 import type { FamilyId, RoleId, UnitDef } from './types';
 
 export const UNITS: Record<number, UnitDef> = {
-  1: { n: 1, name: '하나쌤', title: '하나 지휘자', role: 'singer', cost: 4, hp: 1100, atk: 17, skill: 'conductor', coef: 30, line: '자, 다 같이 한 박!' },
+  1: { n: 1, name: '하나쌤', title: '하나 지휘자', role: 'singer', cost: 3, hp: 1100, atk: 17, skill: 'conductor', coef: 30, line: '자, 다 같이 한 박!' },
   2: { n: 2, name: '토토와 끼끼', title: '쌍둥이 토끼', role: 'healer', cost: 1, hp: 550, atk: 10, skill: 'twinHeal', coef: 6, line: '우리는~ 둘이야!' },
   3: { n: 3, name: '띵띵이', title: '트라이앵글 다람쥐', role: 'singer', cost: 1, hp: 550, atk: 12, skill: 'ding', coef: 12, line: '띵!' },
   4: { n: 4, name: '거부기', title: '네모 등껍질 거북 기사', role: 'knight', cost: 1, hp: 750, atk: 10, skill: 'shell', coef: 6, line: '내 뒤로 숨어!' },

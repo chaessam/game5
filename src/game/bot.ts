@@ -21,12 +21,12 @@ import type { BagItem, GameState, PlayerState, UnitInst } from './types';
 type Piece = Pick<UnitInst, 'char' | 'star' | 'items'>;
 const value = (u: Pick<UnitInst, 'char' | 'star'>) => UNITS[u.char].cost * 3 ** (u.star - 1);
 /**
- * 어려움이 아는 '메타': 덱 고정 전체 판 시뮬레이션(tools/ai-sim.ts --decks, 140판)의 평균 순위로 만든 가산점.
+ * 어려움이 아는 '메타': 덱 고정 전체 판 시뮬레이션(tools/ai-sim.ts --decks, 140판, 하나쌤 3골드 반영)의 평균 순위로 만든 가산점.
  * 평균 순위 2.5보다 좋을수록 +, 나쁠수록 −. 수치를 바꾸면 다시 재서 고친다.
  */
 const DECK_PRIOR: Record<string, number> = {
-  '기사 성벽': 4, '짝꿍 가문': 4, '헌터': 4, '세모 가문': 3, '닌자': 3, '다이아+하나쌤': 2, '큰 수': 1,
-  '하이파이브 마법': 0, '다이아 독창': 0, '변신 부자(돌 4)': -1, '작은 수': -2, '대합창': -2, '힐러 합창': -3, '대합창(하나쌤)': -6,
+  '다이아+하나쌤': 4, '헌터': 3, '다이아 독창': 3, '하이파이브 마법': 2, '닌자': 2, '짝꿍 가문': 2, '큰 수': 1,
+  '기사 성벽': -1, '세모 가문': -2, '작은 수': -2, '힐러 합창': -2, '변신 부자(돌 4)': -3, '대합창': -4, '대합창(하나쌤)': -4,
 };
 const deckChars = (name?: string) => (name ? (META_DECKS[name] ?? []).map((c) => (typeof c === 'number' ? c : c.c)) : []);
 
@@ -58,7 +58,9 @@ function pickBoard(p: PlayerState, n: number, bonus: (u: UnitInst) => number = (
     let bestSc = -Infinity;
     for (const u of pool) {
       if (chosen.includes(u)) continue;
-      const sc = boardScore([...chosen, u]) + bonus(u);
+      // 같은 캐릭터 두 명은 가문에 한 번만 세서 손해: 다른 친구가 있으면 피한다
+      const dup = chosen.some((x) => x.char === u.char) ? value(u) * 10 + 20 : 0;
+      const sc = boardScore([...chosen, u]) + bonus(u) - dup;
       if (sc > bestSc) {
         bestSc = sc;
         best = u;
@@ -232,7 +234,8 @@ function chooseDeck(g: GameState, p: PlayerState) {
 
 // ---------------- 아이템 ----------------
 /** 돌·보물을 판 점수가 가장 오르는 곳에(어려움은 두 돌의 순서까지) */
-function useItems(g: GameState, p: PlayerState, chosen: UnitInst[], orders: boolean) {
+/** keep(u, 새 숫자) = false면 그 돌은 쓰지 않는다(목표 덱·가문의 숫자를 지키기) */
+function useItems(g: GameState, p: PlayerState, chosen: UnitInst[], orders: boolean, keep: (u: UnitInst, n: number) => boolean = () => true) {
   for (let iter = 0; iter < 6 && p.bag.length; iter++) {
     const base = boardScore(chosen);
     let best: { bi: number; u: UnitInst; items: ItemId[]; gain: number } | null = null;
@@ -244,7 +247,8 @@ function useItems(g: GameState, p: PlayerState, chosen: UnitInst[], orders: bool
         if (plan.ok) tries.push(plan.items);
         if (orders && u.items.length === 1 && slotCount(g) === 2) tries.push([item, ...u.items]);
         for (const items of tries) {
-          if (!checkItems(u.char, items).ok) continue;
+          const r = checkItems(u.char, items);
+          if (!r.ok || !keep(u, r.value)) continue;
           let gain = boardScore(chosen.map((x) => (x === u ? { ...x, items } : x))) - base;
           if (!isStoneItem(item)) gain += treasureGain(item, u, chosen);
           if (gain > (best?.gain ?? 0.5)) best = { bi, u, items, gain };
@@ -333,7 +337,8 @@ function normalPrep(g: GameState, p: PlayerState) {
     }
   }
   const chosen = pickBoard(p, p.level);
-  useItems(g, p, chosen, false);
+  const fam = p.ai?.fam;
+  useItems(g, p, chosen, false, (u, n) => !fam || !familiesOf(numberOf(u)).includes(fam) || familiesOf(n).includes(fam));
   placeBoard(g, p, chosen);
   p.ai = { ...(p.ai ?? {}), keepEmpty: false };
 }
@@ -351,6 +356,8 @@ function hardPrep(g: GameState, p: PlayerState) {
   }
   const deck = deckChars(p.ai?.deck);
   const deckBonus = (u: UnitInst) => (deck.includes(u.char) ? 12 : 0);
+  // 덱 친구의 숫자는 덱 안의 숫자로만 바꾼다(합창 구조 지키기)
+  const keepDeck = (u: UnitInst, n: number) => !deck.includes(u.char) || deck.includes(n);
 
   // 후보 판
   const n = p.level;
@@ -383,7 +390,7 @@ function hardPrep(g: GameState, p: PlayerState) {
   for (const c of cands.slice(0, 8)) {
     const itemsBefore = new Map(allUnits(p).map((u) => [u.uid, u.items.slice()]));
     const bagBefore = p.bag.slice();
-    useItems(g, p, c, true);
+    useItems(g, p, c, true, keepDeck);
     placeBoard(g, p, c, 6);
     const mine = toBattleBoard(p);
     let sc = boardScore(c) * 0.05;
@@ -402,7 +409,7 @@ function hardPrep(g: GameState, p: PlayerState) {
   scored.sort((a, b) => b.sc - a.sc);
   const pickSecond = scored.length > 1 && rand(g) < 0.1;
   const final = (pickSecond ? scored[1] : scored[0])?.c ?? [];
-  useItems(g, p, final, true);
+  useItems(g, p, final, true, keepDeck);
   placeBoard(g, p, final);
   p.ai = { ...(p.ai ?? {}), keepEmpty: false };
 }
