@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Gothic+A1:wght@400;700;800&display=swap">
+<style>
+  :root { --c1:#9aa3b5; --c2:#34c38f; --c3:#3fa3ff; --c4:#b06bff; --c5:#ffc531; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#1b1446; color:#fff; font-family:'Gothic A1',sans-serif; width:1500px; padding:26px 30px 30px; }
+  h1 { font-family:Jua; font-size:38px; margin:0; letter-spacing:.5px; }
+  .sub { color:#cfc8ff; font-size:17px; margin:6px 0 16px; }
+  .sub b { color:#fff; }
+  .legend { display:grid; grid-template-columns:1.05fr 1.35fr 1.15fr; gap:14px; margin-bottom:18px; }
+  .box { background:#2a2162; border:2px solid #3d3388; border-radius:18px; padding:12px 16px 14px; }
+  .box h2 { font-family:Jua; font-size:24px; margin:0 0 6px; font-weight:400; }
+  .box h2 small { font-family:'Gothic A1'; font-size:14px; color:#cfc8ff; font-weight:700; margin-left:6px; }
+  .box p { margin:4px 0; font-size:15px; line-height:1.5; color:#e8e4ff; }
+  .rows { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; margin-top:4px; }
+  .row { display:flex; align-items:center; gap:7px; font-size:15px; }
+  .row b { font-family:Jua; font-weight:400; font-size:17px; min-width:44px; }
+  .row span { color:#d8d2ff; font-size:13.5px; }
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  .card { background:linear-gradient(180deg,#2c2366,#1f1850); border:4px solid var(--cc); border-radius:20px; padding:8px 12px 12px; text-align:center; position:relative; }
+  .card .cost { position:absolute; right:12px; top:8px; font-family:Jua; color:#ffc531; font-size:18px; }
+  .card .art { height:208px; display:grid; place-items:center; }
+  .name { font-family:Jua; font-size:25px; }
+  .title { color:#cfc8ff; font-size:14px; font-weight:700; }
+  .chips { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:7px 0 7px; }
+  .chip { display:inline-flex; align-items:center; gap:4px; background:#15103a; border-radius:999px; padding:3px 10px 3px 6px; font-size:14px; font-weight:800; }
+  .chip.role { background:#3a2f80; }
+  .hide { background:rgba(255,212,59,.12); border:1.5px dashed #FFD43B; border-radius:10px; padding:5px 8px; font-size:14px; color:#FFE58A; font-weight:700; }
+  .bottom { display:grid; grid-template-columns:1.25fr 1fr; gap:14px; margin-top:16px; }
+  .cells { display:flex; gap:8px; margin-top:8px; }
+  .cell { width:72px; height:72px; border:2px dashed #6a5fc0; border-radius:12px; display:grid; place-items:center; background:#211a52; }
+  .stone { display:flex; align-items:center; gap:14px; margin-top:4px; }
+  .arrow { font-family:Jua; font-size:22px; color:#FFD43B; text-align:center; line-height:1.2; }
+  .famrow { display:flex; gap:5px; justify-content:center; margin-top:2px; font-size:13px; font-weight:800; }
+</style>
+</head>
+<body>
+<h1>숫자 친구 생김새 규칙 (시안)</h1>
+<div class="sub">한 캐릭터 = <b>3겹</b>. 롤처럼 <b>모양만 봐도 누군지·무슨 직업인지</b> 알고, 가문은 <b>보석</b>으로 바로 보여요.</div>
+
+<div class="legend">
+  <div class="box">
+    <h2>① 몸 = 그 캐릭터 <small>숫자가 몸에 숨어 있어요</small></h2>
+    <p>캐릭터마다 동물·사물이 달라요. 거북, 문어, 고양이, 구미호, 매미, 꿀벌, 불가사리, 용…</p>
+    <p>그리고 <b>그 숫자를 몸으로 셀 수 있어요</b>: 문어 다리 8개, 구미호 꼬리 9개, 불가사리 팔 5개, 무지개 7색, 꿀단지 육각형, 거북 배 2×2칸, 용 배 비늘 6×6.</p>
+  </div>
+  <div class="box">
+    <h2>② 옷·무기·받침 = 직업 <small>멀리서도 실루엣으로</small></h2>
+    <div class="rows" id="roles"></div>
+  </div>
+  <div class="box">
+    <h2>③ 보석·몸빛 = 가문 <small>숫자가 정해요</small></h2>
+    <div class="rows" id="fams"></div>
+    <p style="margin-top:6px">숫자 돌로 숫자가 바뀌면 <b>모습·직업은 그대로, 보석만</b> 바뀌어요.</p>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="bottom">
+  <div class="box">
+    <h2>판 위 작은 크기 <small>크롬북 판 한 칸(72px)에서도 구분되는지</small></h2>
+    <div class="cells" id="cells"></div>
+  </div>
+  <div class="box">
+    <h2>숫자 돌을 끼우면 <small>오롱이 5 → ×2 → 10</small></h2>
+    <div class="stone" id="stone"></div>
+  </div>
+</div>
+
+<script type="module">
+import { drawChar, CHARS, families, famIcon, roleIcon, FAM_NAME, ROLE_NAME } from './chars.js';
+const roleGear = {
+  knight: ['투구 + 방패', '받침: 방패'], ninja: ['복면 + 빨간 띠 + 표창', '받침: 표창'], hunter: ['깃털 모자 + 활', '받침: 과녁'],
+  mage: ['고깔모자 + 별 지팡이', '받침: 마법진'], singer: ['헤드폰 + 마이크 + 음표', '받침: 무대'], healer: ['간호 모자 + 하트·꿀', '받침: 꽃잎'],
+};
+document.getElementById('roles').innerHTML = Object.keys(roleGear).map((r) =>
+  `<div class="row">${roleIcon(r, 26)}<b>${ROLE_NAME[r]}</b><span>${roleGear[r][0]}<br>${roleGear[r][1]}</span></div>`).join('');
+const famLook = { even: '파란 쌍구슬', tri: '초록 세모', five: '노란 손바닥', prime: '보라 다이아 + 몸이 반짝(덜 아파요)', rich: '금왕관(쓰러지면 둘로)' };
+document.getElementById('fams').innerHTML = Object.keys(famLook).map((f) =>
+  `<div class="row" ${f === 'prime' || f === 'rich' ? 'style="grid-column:span 2"' : ''}>${famIcon(f, 24)}<b>${FAM_NAME[f]}</b><span>${famLook[f]}</span></div>`).join('');
+
+const order = [4, 8, 7, 9, 17, 6, 5, 36];
+document.getElementById('grid').innerHTML = order.map((n) => {
+  const c = CHARS[n];
+  const fams = families(n);
+  return `<div class="card" style="--cc:var(--c${c.cost})"><div class="cost">${c.cost}골드</div>
+    <div class="art">${drawChar(n, 196)}</div>
+    <div class="name">${n} ${c.name}</div><div class="title">${c.title}</div>
+    <div class="chips"><span class="chip role">${roleIcon(c.role, 18)}${ROLE_NAME[c.role]}</span>${fams.map((f) => `<span class="chip">${famIcon(f, 18)}${FAM_NAME[f]}</span>`).join('')}</div>
+    <div class="hide">숨은 숫자: ${c.hide}</div></div>`;
+}).join('');
+document.getElementById('cells').innerHTML = order.map((n) => `<div class="cell">${drawChar(n, 60)}</div>`).join('');
+const famChips = (n) => `<div class="famrow">${families(n).map((f) => `${famIcon(f, 16)}${FAM_NAME[f]}`).join(' ')}</div>`;
+document.getElementById('stone').innerHTML =
+  `<div>${drawChar(5, 130, 5)}${famChips(5)}</div>
+   <div class="arrow">×2 돌<br>→</div>
+   <div>${drawChar(5, 130, 10)}${famChips(10)}</div>
+   <p style="font-size:14px;color:#e8e4ff;line-height:1.5;margin:0">불가사리·마법사는 그대로.<br>단단(보라·반짝) → 사라지고<br>짝꿍(파랑)이 새로 생겨요.</p>`;
+</script>
+</body>
+</html>
