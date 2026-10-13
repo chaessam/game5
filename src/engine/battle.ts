@@ -60,6 +60,26 @@ export interface BattleOptions {
   log?: boolean;
   /** 팀별 피해 배율(%) — 밸런스 측정(파워 지수)용 */
   dmgMultPct?: [number, number];
+  /** 박자마다 상태 스냅샷(화면 재생용) */
+  frames?: boolean;
+}
+
+/** 한 박이 끝났을 때 한 친구의 상태(화면 재생용) */
+export interface FrameUnit {
+  hp: number;
+  maxHp: number;
+  shield: number;
+  alive: boolean;
+  /** 다음 박에 멈춰 있음 */
+  stun: boolean;
+  /** 다음 박에 약해져 있음 */
+  weak: boolean;
+}
+
+/** beat = -1(시작 전), 0(0박 준비 뒤), 1~ (그 박 끝) */
+export interface BattleFrame {
+  beat: number;
+  units: Record<number, FrameUnit>;
 }
 
 export interface BattleResult {
@@ -73,6 +93,7 @@ export interface BattleResult {
   /** 쓰러뜨린 상대 친구 수(꼬마 제외) — 메달 계산용 */
   defeated: [number, number];
   events: BattleEvent[];
+  frames: BattleFrame[];
 }
 
 type Effect =
@@ -265,6 +286,21 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
   }
   const stunned = (f: Fighter) => beat >= f.stunFrom && beat <= f.stunUntil;
   const weakened = (f: Fighter) => beat >= f.weakFrom && beat <= f.weakUntil;
+  const frames: BattleFrame[] = [];
+  const snapshot = opts.frames
+    ? (b: number) => {
+        const units: Record<number, FrameUnit> = {};
+        const next = b + 1;
+        for (const f of all()) {
+          units[f.id] = {
+            hp: Math.max(0, f.hp), maxHp: f.maxHp, shield: f.shield, alive: f.alive,
+            stun: f.alive && next >= f.stunFrom && next <= f.stunUntil,
+            weak: f.alive && next >= f.weakFrom && next <= f.weakUntil,
+          };
+        }
+        frames.push({ beat: b, units });
+      }
+    : null;
 
   // ---------- 노래 ----------
   /** 한 노래 안에서 여러 번 때릴 때 쓰는 예상 체력(다른 노래와는 공유하지 않음 = 동시) */
@@ -545,6 +581,7 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
   };
 
   // ---------- 0박 ----------
+  snapshot?.(-1);
   for (const t of [0, 1] as TeamIndex[]) {
     // 36 약수 금화
     for (const u of teams[t]) {
@@ -593,6 +630,7 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
   }
 
   let winner = winnerNow();
+  snapshot?.(0);
 
   // ---------- 1~48박 ----------
   while (winner === null && beat < cfg.maxBeat) {
@@ -680,6 +718,7 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
     // ⑤ 쓰러짐
     processDeaths(revivers);
     winner = winnerNow();
+    snapshot?.(beat);
   }
 
   let timeout = false;
@@ -696,5 +735,5 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
   }
 
   const survivors: [number, number] = [up(0).filter((f) => !f.minion).length, up(1).filter((f) => !f.minion).length];
-  return { winner, beats: beat, timeout, fighters: all(), synergy: syn, survivors, defeated, events };
+  return { winner, beats: beat, timeout, fighters: all(), synergy: syn, survivors, defeated, events, frames };
 }

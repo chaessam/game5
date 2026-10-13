@@ -469,7 +469,7 @@ export function resolveRound(g: GameState): RoundOutcome {
   if (plan.kind === 'pve') {
     const mon = monsterFor(g);
     for (const p of g.players) {
-      const result = runBattle(toBattleBoard(p), mon.board, { log: true });
+      const result = runBattle(toBattleBoard(p), mon.board, { log: true, frames: true });
       const win = result.winner === 0;
       addMedal(p, win ? MEDALS.pve.win : MEDALS.pve.loss);
       if (win) {
@@ -484,7 +484,7 @@ export function resolveRound(g: GameState): RoundOutcome {
     for (const pr of pairings(g)) {
       const A = g.players[pr.a];
       const B = g.players[pr.b];
-      const result = runBattle(toBattleBoard(A), toBattleBoard(B), { log: true });
+      const result = runBattle(toBattleBoard(A), toBattleBoard(B), { log: true, frames: true });
       out.fights.push({ a: pr.a, b: pr.b, mirror: pr.mirror, label: pr.mirror ? `거울 ${B.name}` : B.name, result });
       const sides: [PlayerState, 0 | 1][] = pr.mirror ? [[A, 0]] : [[A, 0], [B, 1]];
       for (const [p, side] of sides) {
@@ -542,4 +542,20 @@ export function opponentPreview(g: GameState, playerId: number): string {
   if (!pr) return '';
   const other = pr.a === playerId ? pr.b : pr.a;
   return pr.mirror && pr.a === playerId ? `거울 ${g.players[other].name}` : g.players[other].name;
+}
+
+/** 이번 라운드 상대(구경용): 몬스터면 보드, 친구면 플레이어 번호(거울이면 mirror) */
+export function opponentOf(
+  g: GameState,
+  playerId: number,
+): { kind: 'pve'; name: string; board: BoardUnit[] } | { kind: 'pvp'; id: number; mirror: boolean } | null {
+  const plan = currentPlan(g);
+  if (!plan) return null;
+  if (plan.kind === 'pve') {
+    const m = monsterFor(g);
+    return { kind: 'pve', name: m.name, board: m.board };
+  }
+  const pr = pairings(g).find((x) => x.a === playerId || (!x.mirror && x.b === playerId));
+  if (!pr) return null;
+  return { kind: 'pvp', id: pr.a === playerId ? pr.b : pr.a, mirror: pr.mirror && pr.a === playerId };
 }

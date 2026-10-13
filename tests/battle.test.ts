@@ -32,6 +32,25 @@ describe('결정성과 대칭', () => {
     }
   });
 
+  it('박자 스냅샷: 켜도 결과는 같고, 시작 전·0박·매 박이 있고, 체력이 이벤트와 맞는다', () => {
+    for (let s = 1; s <= 20; s++) {
+      const a = randomBoard(s * 3);
+      const b = randomBoard(s * 5 + 9);
+      const plain = runBattle(a, b, { log: true });
+      const r = runBattle(a, b, { log: true, frames: true });
+      expect(r.winner).toBe(plain.winner);
+      expect(r.events).toEqual(plain.events);
+      expect(r.frames.map((f) => f.beat)).toEqual([-1, ...Array.from({ length: r.beats + 1 }, (_, i) => i)]);
+      const first = r.frames[0];
+      for (const f of r.fighters.filter((x) => !x.minion)) {
+        if (f.char !== 36) expect(first.units[f.id].hp).toBe(first.units[f.id].maxHp);
+      }
+      const last = r.frames[r.frames.length - 1];
+      for (const f of r.fighters) expect(last.units[f.id].alive).toBe(f.alive);
+      expect(plain.frames).toEqual([]);
+    }
+  });
+
   it('팀을 바꿔 놓아도 결과가 뒤집힐 뿐 같다(동시 처리)', () => {
     for (let s = 1; s <= 60; s++) {
       const a = randomBoard(s * 7);
