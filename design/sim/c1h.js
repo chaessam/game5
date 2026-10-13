@@ -1,0 +1,1 @@
+const V=require('./tunedV2.js'); module.exports = Object.assign({}, V, { conductorCounts: 2, conductorShieldMin: 1, conductorShield: 25, unitOverride: Object.assign({}, V.unitOverride, {1:{hp:1150, atk:22, cost:4}}) });

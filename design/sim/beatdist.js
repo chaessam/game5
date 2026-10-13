@@ -1,0 +1,10 @@
+const { UNITS, BASE_CFG } = require('./data.js');
+const { battle } = require('./engine.js');
+const { rng, buildComp, placements } = require('./lib.js');
+const { COMPS } = require('./comps.js');
+const cfg = Object.assign({}, BASE_CFG, require(process.argv[2]));
+const vars = {}; for (const n of Object.keys(COMPS)) vars[n] = placements(buildComp(COMPS[n], 8, 50, cfg).units, 4, 7);
+const ns = Object.keys(vars); const beats = [];
+for (const a of ns) for (const b of ns) if (a !== b) for (const va of vars[a]) for (const vb of vars[b]) beats.push(battle(va, vb, cfg).beat);
+const f = t => (100 * beats.filter(x => x >= t).length / beats.length).toFixed(0) + '%';
+console.log('n', beats.length, '>=12', f(12), '>=24', f(24), '>=30', f(30), '>=36', f(36), '>=48', f(48));

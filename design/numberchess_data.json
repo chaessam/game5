@@ -1,0 +1,1373 @@
+{
+  "version": "final-1",
+  "source": "scratchpad/sim/tunedV7.js (시뮬레이션 확정안), 체력은 ×1.1을 미리 곱해 10 단위로 반올림",
+  "rules": {
+    "beatSec": 0.5,
+    "slowBeatSecFirst3Games": 0.8,
+    "maxBeat": 48,
+    "hotBeatFrom": 38,
+    "hotBasicMult": 2,
+    "numberRange": [
+      2,
+      40
+    ],
+    "onlyCharacterWithNumber1": 1,
+    "chorusMult": {
+      "1": 1,
+      "2": 1.5,
+      "3": 2,
+      "4plus": 2.5
+    },
+    "songMultCap": 3.5,
+    "healShieldChorusBonusFactor": 0.5,
+    "primeSongRule": "그 박에 노래한 우리 팀 친구가 모두 단단이면 기본 배율 = max(합창 배율, 단단 배율)",
+    "handshake": {
+      "perGcd": 15,
+      "capPerUnit": 250,
+      "minGcd": 2,
+      "adjacency": "앞뒤·양옆"
+    },
+    "rehearsal": {
+      "minNumber": 24,
+      "power": 0.5,
+      "healBecomesShield": true,
+      "noCC": true,
+      "noBonuses": true,
+      "perHitFloor": true
+    },
+    "status": {
+      "immuneBeatsAfter": 3,
+      "weakBasicMult": 0.5
+    },
+    "countRules": {
+      "family": "보드 위 서로 다른 지금 숫자",
+      "role": "보드 위 서로 다른 캐릭터",
+      "benchCounts": false,
+      "minionCounts": false
+    },
+    "star": {
+      "mult": [
+        1,
+        2,
+        3
+      ],
+      "merge": 3,
+      "timeIsStarIndependent": true
+    },
+    "battleEnd": "전멸 또는 48박 → 생존 수(꼬마 포함) → 남은 체력 합 → 무승부",
+    "beatOrder": [
+      "0박: 시너지→36 금화→손잡기→몸풀기",
+      "①가문 박 효과(세모 채우기·다섯손 쌓기)",
+      "②노래할 친구 모으기(멈춤 제외, 하나쌤은 이웃이 노래할 때만)→팀별 k·배율",
+      "③노래 동시 적용(박 시작 상태 기준)",
+      "④기본 공격 동시(짝수 박 짝꿍 추가타, 38박부터 2배)",
+      "⑤쓰러짐: 되살리기→부자 분열",
+      "⑥상태 1 감소"
+    ],
+    "integerMath": "모든 계산 정수, 나머지 버림. 무작위는 상점에만(방 시드)"
+  },
+  "families": [
+    {
+      "id": "even",
+      "name": "짝꿍",
+      "icon": "●●",
+      "color": "blue",
+      "accessory": "파란 리본",
+      "test": "n%2==0",
+      "tiers": [
+        2,
+        4,
+        6
+      ],
+      "effect": {
+        "type": "evenBeatExtraHit",
+        "atkFraction": [
+          0.3,
+          0.6,
+          0.8
+        ]
+      },
+      "panelText": "2의 배수(짝수). 짝수 박에 '짝!' 한 대 더",
+      "tierWords": [
+        "작게",
+        "중간",
+        "크게"
+      ],
+      "members": [
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        16,
+        18,
+        20,
+        24,
+        28,
+        30,
+        36
+      ]
+    },
+    {
+      "id": "tri",
+      "name": "세모",
+      "icon": "▲",
+      "color": "green",
+      "accessory": "초록 세모 고깔",
+      "test": "n%3==0",
+      "tiers": [
+        3,
+        5,
+        7
+      ],
+      "effect": {
+        "type": "refillShieldOn3Beats",
+        "shield": [
+          25,
+          50,
+          80
+        ]
+      },
+      "panelText": "3의 배수. 3단 박마다 세모 방패를 채워요",
+      "tierWords": [
+        "25까지",
+        "50까지",
+        "80까지"
+      ],
+      "members": [
+        3,
+        6,
+        9,
+        12,
+        15,
+        18,
+        21,
+        24,
+        30,
+        36
+      ]
+    },
+    {
+      "id": "five",
+      "name": "다섯손",
+      "icon": "✋",
+      "color": "yellow",
+      "accessory": "노란 손바닥 배지",
+      "test": "n%5==0",
+      "tiers": [
+        2,
+        4,
+        6
+      ],
+      "effect": {
+        "type": "atkStackOn5Beats",
+        "atkPerStack": [
+          4,
+          8,
+          12
+        ],
+        "maxStacks": 6
+      },
+      "panelText": "5의 배수(끝자리 0·5). 5단 박마다 공격력 쑥!",
+      "tierWords": [
+        "+4씩",
+        "+8씩",
+        "+12씩"
+      ],
+      "members": [
+        5,
+        10,
+        15,
+        20,
+        25,
+        30
+      ]
+    },
+    {
+      "id": "prime",
+      "name": "단단",
+      "icon": "◆",
+      "color": "purple",
+      "accessory": "보라 다이아 브로치",
+      "test": "divisorCount(n)==2",
+      "tiers": [
+        2,
+        4,
+        6
+      ],
+      "effect": {
+        "type": "primeOnlySong",
+        "songMult": [
+          2,
+          2.5,
+          3
+        ],
+        "damageTakenReduce": [
+          0.1,
+          0.2,
+          0.3
+        ]
+      },
+      "panelText": "약수가 딱 2개(1과 자기)인 수. 그 박에 단단 친구만 노래하면 쾅! 다이아 몸이라 덜 아파요",
+      "tierWords": [
+        "두 배",
+        "두 배 반",
+        "세 배"
+      ],
+      "members": [
+        2,
+        3,
+        5,
+        7,
+        11,
+        13,
+        17
+      ]
+    },
+    {
+      "id": "rich",
+      "name": "부자",
+      "icon": "♛",
+      "color": "gold",
+      "accessory": "금왕관",
+      "test": "divisorCount(n)>=6",
+      "tiers": [
+        3,
+        5,
+        7
+      ],
+      "effect": {
+        "type": "splitOnDeath",
+        "pair": "곱해서 n, 차가 가장 작은 두 수(1 제외)",
+        "minionPower": [
+          0.25,
+          0.33,
+          0.5
+        ],
+        "minionSong": "자기 숫자 배수 박마다 앞의 적에게 숫자×10"
+      },
+      "panelText": "약수가 6개 이상. 쓰러지면 곱셈 짝 꼬마 둘로 (12 → 3과 4)",
+      "tierWords": [
+        "4분의 1 힘",
+        "3분의 1 힘",
+        "절반 힘"
+      ],
+      "members": [
+        12,
+        18,
+        20,
+        24,
+        28,
+        30,
+        36
+      ],
+      "splitPairs": {
+        "12": [
+          3,
+          4
+        ],
+        "18": [
+          3,
+          6
+        ],
+        "20": [
+          4,
+          5
+        ],
+        "24": [
+          4,
+          6
+        ],
+        "28": [
+          4,
+          7
+        ],
+        "30": [
+          5,
+          6
+        ],
+        "32": [
+          4,
+          8
+        ],
+        "36": [
+          6,
+          6
+        ],
+        "40": [
+          5,
+          8
+        ]
+      }
+    }
+  ],
+  "outsideRosterFamilies": {
+    "14": [
+      "even"
+    ],
+    "19": [
+      "prime"
+    ],
+    "22": [
+      "even"
+    ],
+    "23": [
+      "prime"
+    ],
+    "26": [
+      "even"
+    ],
+    "27": [
+      "tri"
+    ],
+    "29": [
+      "prime"
+    ],
+    "31": [
+      "prime"
+    ],
+    "32": [
+      "even",
+      "rich"
+    ],
+    "33": [
+      "tri"
+    ],
+    "34": [
+      "even"
+    ],
+    "35": [
+      "five"
+    ],
+    "37": [
+      "prime"
+    ],
+    "38": [
+      "even"
+    ],
+    "39": [
+      "tri"
+    ],
+    "40": [
+      "even",
+      "five",
+      "rich"
+    ]
+  },
+  "roles": [
+    {
+      "id": "knight",
+      "name": "기사",
+      "icon": "은색 방패",
+      "tiers": [
+        2,
+        4
+      ],
+      "base": "앞줄에 있으면 적의 보통 기본 공격이 기사부터(나부터 때려!)",
+      "effect": {
+        "selfDamageReduce": [
+          0.15,
+          0.3
+        ],
+        "allyDamageReduceAt4": 0.1
+      },
+      "panelText": "앞줄에서 대신 맞아 줘요",
+      "members": [
+        4,
+        12,
+        15,
+        18
+      ]
+    },
+    {
+      "id": "ninja",
+      "name": "닌자",
+      "icon": "수리검",
+      "tiers": [
+        2,
+        4
+      ],
+      "base": "기본 공격이 적 뒷줄부터(도발 무시)",
+      "effect": {
+        "atkBonus": [
+          0.3,
+          0.6
+        ]
+      },
+      "panelText": "적 뒷줄부터 때려요",
+      "members": [
+        8,
+        11,
+        21,
+        28
+      ]
+    },
+    {
+      "id": "hunter",
+      "name": "사냥꾼",
+      "icon": "활",
+      "tiers": [
+        2,
+        4
+      ],
+      "base": "기본 공격이 가장 먼 적(도발 무시)",
+      "effect": {
+        "atkBonus": [
+          0.3,
+          0.7
+        ]
+      },
+      "panelText": "가장 먼 적을 쏴요",
+      "members": [
+        7,
+        10,
+        16,
+        25
+      ]
+    },
+    {
+      "id": "mage",
+      "name": "마법사",
+      "icon": "보라 고깔모자",
+      "tiers": [
+        2,
+        4
+      ],
+      "effect": {
+        "ownSongMultAdd": [
+          0.3,
+          0.7
+        ]
+      },
+      "panelText": "마법사 노래가 더 세요",
+      "members": [
+        5,
+        9,
+        20,
+        36
+      ]
+    },
+    {
+      "id": "singer",
+      "name": "가수",
+      "icon": "음표",
+      "tiers": [
+        2,
+        4
+      ],
+      "effect": {
+        "teamSongMultAddWhenChorus": [
+          0.5,
+          1.0
+        ]
+      },
+      "panelText": "합창이 더 커져요",
+      "members": [
+        1,
+        3,
+        17,
+        24
+      ]
+    },
+    {
+      "id": "healer",
+      "name": "치료사",
+      "icon": "하트 반창고",
+      "tiers": [
+        2,
+        4
+      ],
+      "effect": {
+        "teamHealShieldSongMultAdd": [
+          0.3,
+          0.7
+        ]
+      },
+      "panelText": "회복·방패 노래가 더 커요",
+      "members": [
+        2,
+        6,
+        13,
+        30
+      ]
+    }
+  ],
+  "units": [
+    {
+      "n": 1,
+      "name": "하나쌤",
+      "title": "하나 지휘자",
+      "animal": "펭귄",
+      "role": "singer",
+      "cost": 4,
+      "hp": 1430,
+      "atk": 26,
+      "skill": {
+        "id": "conductor",
+        "beat": "이웃(앞뒤·양옆)이 노래하는 박",
+        "chorusCount": 2,
+        "shieldPerOtherSinger": 30,
+        "shieldMinOthers": 2,
+        "target": "가장 아픈 친구",
+        "note": "보호막은 ★배. 돌을 끼우면 이 능력을 잃는다는 경고"
+      },
+      "line": "자, 다 같이 한 박!"
+    },
+    {
+      "n": 2,
+      "name": "토토와 끼끼",
+      "title": "쌍둥이 토끼",
+      "animal": "토끼 둘",
+      "role": "healer",
+      "cost": 1,
+      "hp": 660,
+      "atk": 15,
+      "skill": {
+        "id": "twinHeal",
+        "type": "heal",
+        "coef": 6,
+        "fixedCount": 2,
+        "target": "가장 아픈 친구 2명"
+      },
+      "line": "우리는~ 둘이야!"
+    },
+    {
+      "n": 3,
+      "name": "띵띵이",
+      "title": "트라이앵글 다람쥐",
+      "animal": "다람쥐",
+      "role": "singer",
+      "cost": 1,
+      "hp": 660,
+      "atk": 18,
+      "skill": {
+        "id": "ding",
+        "type": "damage",
+        "coef": 12,
+        "target": "앞의 적"
+      },
+      "line": "띵!"
+    },
+    {
+      "n": 4,
+      "name": "거부기",
+      "title": "네모 등껍질 거북 기사",
+      "animal": "거북",
+      "role": "knight",
+      "cost": 1,
+      "hp": 830,
+      "atk": 16,
+      "skill": {
+        "id": "shell",
+        "type": "shield",
+        "coef": 6,
+        "target": "바로 붙은 친구 모두(최대 3)"
+      },
+      "line": "내 뒤로 숨어!"
+    },
+    {
+      "n": 5,
+      "name": "별이",
+      "title": "별빛 마법사",
+      "animal": "꼬마 마법사",
+      "role": "mage",
+      "cost": 1,
+      "hp": 660,
+      "atk": 17,
+      "skill": {
+        "id": "meteor",
+        "type": "damage",
+        "coef": 14,
+        "target": "체력이 가장 많은 적",
+        "stunDiv": 5
+      },
+      "line": "하나, 둘, 셋, 넷, 다섯, 반짝!"
+    },
+    {
+      "n": 6,
+      "name": "붕붕이",
+      "title": "꿀벌 간호사",
+      "animal": "꿀벌",
+      "role": "healer",
+      "cost": 1,
+      "hp": 660,
+      "atk": 15,
+      "skill": {
+        "id": "honey",
+        "type": "heal",
+        "coef": 2,
+        "fixedSpoons": [
+          3,
+          2,
+          1
+        ],
+        "target": "가장 아픈 친구 1·2·3번째"
+      },
+      "line": "꿀 먹고 힘내!"
+    },
+    {
+      "n": 7,
+      "name": "칠색이",
+      "title": "무지개 고양이 궁수",
+      "animal": "고양이",
+      "role": "hunter",
+      "cost": 1,
+      "hp": 660,
+      "atk": 21,
+      "skill": {
+        "id": "rainbowArrows",
+        "type": "damage",
+        "coef": 2,
+        "fixedCount": 7,
+        "target": "가장 먼 적"
+      },
+      "line": "…한 발이면 충분해."
+    },
+    {
+      "n": 8,
+      "name": "먹물이",
+      "title": "여덟 다리 문어 닌자",
+      "animal": "문어",
+      "role": "ninja",
+      "cost": 2,
+      "hp": 770,
+      "atk": 23,
+      "skill": {
+        "id": "slap8",
+        "type": "damage",
+        "coef": 2,
+        "fixedCount": 8,
+        "target": "체력이 가장 적은 적(매번)",
+        "weakDiv": 4
+      },
+      "line": "여덟 팔로 다 잡아 줄게~"
+    },
+    {
+      "n": 9,
+      "name": "여우비",
+      "title": "아홉 꼬리 구미호",
+      "animal": "여우",
+      "role": "mage",
+      "cost": 2,
+      "hp": 770,
+      "atk": 21,
+      "skill": {
+        "id": "foxfire",
+        "type": "damage",
+        "countEqualsNumber": true,
+        "perHit": 26,
+        "target": "적 앞줄 왼쪽부터 돌아가며"
+      },
+      "line": "내 꼬리 몇 개게?"
+    },
+    {
+      "n": 10,
+      "name": "스트라이크",
+      "title": "볼링 하마",
+      "animal": "하마",
+      "role": "hunter",
+      "cost": 2,
+      "hp": 830,
+      "atk": 23,
+      "skill": {
+        "id": "strike",
+        "type": "damage",
+        "coef": 8,
+        "target": "적이 가장 많은 세로줄 전체(최대 2)"
+      },
+      "line": "스트라이크!"
+    },
+    {
+      "n": 11,
+      "name": "일일이",
+      "title": "쌍검 닌자",
+      "animal": "꼬마 닌자",
+      "role": "ninja",
+      "cost": 2,
+      "hp": 770,
+      "atk": 25,
+      "skill": {
+        "id": "twinBlade",
+        "type": "damage",
+        "coef": 10,
+        "fixedCount": 2,
+        "target": "체력이 가장 적은 적(매번)"
+      },
+      "line": "쉿… 둘, 하나!"
+    },
+    {
+      "n": 12,
+      "name": "똑딱경",
+      "title": "시계 기사",
+      "animal": "시계 얼굴 기사",
+      "role": "knight",
+      "cost": 3,
+      "hp": 940,
+      "atk": 24,
+      "skill": {
+        "id": "clockStop",
+        "type": "stun+selfShield",
+        "coef": 10,
+        "target": "적 앞줄 모두 멈춤 + 자기 보호막",
+        "stunDiv": 6
+      },
+      "line": "정각이다, 멈춰라!"
+    },
+    {
+      "n": 13,
+      "name": "덤덤이",
+      "title": "덤 빵 제빵사 곰",
+      "animal": "곰",
+      "role": "healer",
+      "cost": 3,
+      "hp": 1050,
+      "atk": 22,
+      "skill": {
+        "id": "baker",
+        "type": "heal",
+        "coef": 3,
+        "fixedBread": 13,
+        "target": "아군 모두 1개씩, 남은 빵은 가장 아픈 친구부터"
+      },
+      "line": "하나 더, 덤이야!"
+    },
+    {
+      "n": 15,
+      "name": "달콩이",
+      "title": "보름달 떡방아 호랑이 기사",
+      "animal": "호랑이",
+      "role": "knight",
+      "cost": 2,
+      "hp": 1050,
+      "atk": 22,
+      "skill": {
+        "id": "ricecake",
+        "type": "damage+selfShield",
+        "coef": 5,
+        "shieldCoef": 6,
+        "target": "적 앞줄 모두"
+      },
+      "line": "쿵덕쿵! 떡 하나 줄게!"
+    },
+    {
+      "n": 16,
+      "name": "접접이",
+      "title": "종이비행기 생쥐",
+      "animal": "생쥐",
+      "role": "hunter",
+      "cost": 2,
+      "hp": 770,
+      "atk": 24,
+      "skill": {
+        "id": "halfPlane",
+        "type": "damage",
+        "coefSeq": [
+          8,
+          4,
+          2,
+          1
+        ],
+        "fixedTargets": 4,
+        "target": "가장 먼 적부터 4명"
+      },
+      "line": "반으로 접고, 또 반으로!"
+    },
+    {
+      "n": 17,
+      "name": "맴순이",
+      "title": "17년 매미 가수",
+      "animal": "매미",
+      "role": "singer",
+      "cost": 3,
+      "hp": 990,
+      "atk": 25,
+      "skill": {
+        "id": "cicada",
+        "type": "damage+weak",
+        "coef": 7,
+        "target": "적 모두",
+        "weakDiv": 6
+      },
+      "line": "17년을 기다렸다!"
+    },
+    {
+      "n": 18,
+      "name": "빵빵",
+      "title": "변신 트럭 로봇",
+      "animal": "트럭 로봇",
+      "role": "knight",
+      "cost": 3,
+      "hp": 940,
+      "atk": 23,
+      "skill": {
+        "id": "truck",
+        "type": "damage+teamShield",
+        "coef": 5,
+        "shieldCoef": 2,
+        "target": "적 앞줄 모두 + 아군 모두 보호막"
+      },
+      "line": "다 타! 출발! 빵빵!"
+    },
+    {
+      "n": 20,
+      "name": "물음표",
+      "title": "스무고개 부엉이 박사",
+      "animal": "부엉이",
+      "role": "mage",
+      "cost": 4,
+      "hp": 990,
+      "atk": 32,
+      "skill": {
+        "id": "riddle",
+        "type": "damage+stun",
+        "coef": 7,
+        "target": "적 모두",
+        "stunDiv": 10
+      },
+      "line": "스무 번 안에 맞혀 볼까?"
+    },
+    {
+      "n": 21,
+      "name": "굴리",
+      "title": "주사위 닌자",
+      "animal": "주사위 몸 닌자",
+      "role": "ninja",
+      "cost": 3,
+      "hp": 940,
+      "atk": 30,
+      "skill": {
+        "id": "dice",
+        "type": "damage",
+        "pipsSeq": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          6
+        ],
+        "perPip": "숫자",
+        "target": "체력이 가장 적은 적(매번)",
+        "note": "6이 나오면 보너스로 6을 한 번 더(무작위 아님)"
+      },
+      "line": "눈을 다 더하면? 21이지롱!"
+    },
+    {
+      "n": 24,
+      "name": "하루",
+      "title": "하루 해님 왕",
+      "animal": "해",
+      "role": "singer",
+      "cost": 4,
+      "hp": 990,
+      "atk": 30,
+      "skill": {
+        "id": "noon",
+        "type": "damage+heal",
+        "coef": 4,
+        "target": "적 모두 피해 + 아군 모두 회복"
+      },
+      "line": "좋은 아침! 다 같이 노래하자!"
+    },
+    {
+      "n": 25,
+      "name": "빙고리",
+      "title": "빙고 너구리 사냥꾼",
+      "animal": "너구리",
+      "role": "hunter",
+      "cost": 4,
+      "hp": 1050,
+      "atk": 34,
+      "skill": {
+        "id": "bingo",
+        "type": "damage",
+        "coef": 10,
+        "target": "적 앞줄·뒷줄 중 많은 줄(같으면 앞줄)"
+      },
+      "line": "빙고!"
+    },
+    {
+      "n": 28,
+      "name": "그림자",
+      "title": "완벽 닌자 까마귀",
+      "animal": "까마귀",
+      "role": "ninja",
+      "cost": 4,
+      "hp": 1050,
+      "atk": 38,
+      "skill": {
+        "id": "perfectBlades",
+        "type": "damage",
+        "fixedBlades": [
+          1,
+          2,
+          4,
+          7,
+          14
+        ],
+        "formula": "칼 × 숫자 × 3 ÷ 4 (마지막에 한 번 나눔, 버림)",
+        "rehearsal": "칼마다 그 값 ÷ 2(버림)",
+        "target": "체력이 가장 적은 적(매번)"
+      },
+      "line": "하나도 빠짐없이!"
+    },
+    {
+      "n": 30,
+      "name": "달래",
+      "title": "달님 여왕",
+      "animal": "달 요정",
+      "role": "healer",
+      "cost": 5,
+      "hp": 1270,
+      "atk": 32,
+      "skill": {
+        "id": "fullMoon",
+        "type": "heal+revive",
+        "coef": 5,
+        "revive": "가장 먼저 쓰러진 아군 1명 체력 절반(전투당 1번, 꼬마·분열한 친구 제외)",
+        "target": "아군 모두"
+      },
+      "line": "괜찮아, 내가 비춰 줄게."
+    },
+    {
+      "n": 36,
+      "name": "서른여섯",
+      "title": "황금 보물 용",
+      "animal": "용",
+      "role": "mage",
+      "cost": 5,
+      "hp": 1210,
+      "atk": 38,
+      "skill": {
+        "id": "dragon",
+        "type": "damage",
+        "coef": 6,
+        "target": "적 모두",
+        "coins": {
+          "rule": "0박에 보드 위 아군 중 지금 숫자가 용 숫자의 약수인 서로 다른 숫자 1개마다",
+          "hpPerCoin": 40,
+          "atkPerCoin": 4,
+          "maxCoins": 7
+        }
+      },
+      "line": "내 약수 친구들, 다 모여라!"
+    }
+  ],
+  "songValuesStar1": {
+    "2": "12",
+    "3": "36",
+    "4": "24씩",
+    "5": "70 + 1박 멈춤",
+    "6": "한 숟갈 12",
+    "7": "한 발 14 ×7 = 98",
+    "8": "한 번 16 ×8 = 128 + 2박 약하게",
+    "9": "26 ×9개 = 234",
+    "10": "80",
+    "11": "110 ×2 = 220",
+    "12": "앞줄 2박 멈춤 + 보호막 120",
+    "13": "빵 1개 39",
+    "15": "앞줄 75 + 보호막 90",
+    "16": "128→64→32→16",
+    "17": "모두 119 + 2박 약하게",
+    "18": "앞줄 90 + 아군 보호막 36",
+    "20": "모두 140 + 2박 멈춤",
+    "21": "21·42·63·84·105·126·126 = 567",
+    "24": "모두 96 + 아군 96 회복 (몸풀기 48·48)",
+    "25": "한 줄 250 (몸풀기 125)",
+    "28": "21·42·84·147·294 = 588 (몸풀기 293)",
+    "30": "아군 150 회복 + 되살리기 (몸풀기 보호막 75)",
+    "36": "모두 216 (몸풀기 108)"
+  },
+  "items": [
+    {
+      "id": "plus1",
+      "name": "더하기 돌",
+      "op": "+1",
+      "rare": false,
+      "rule": "결과 2~40"
+    },
+    {
+      "id": "minus1",
+      "name": "빼기 돌",
+      "op": "-1",
+      "rare": false,
+      "rule": "결과 2 이상"
+    },
+    {
+      "id": "times2",
+      "name": "두 배 돌",
+      "op": "x2",
+      "rare": false,
+      "rule": "결과 40 이하"
+    },
+    {
+      "id": "half",
+      "name": "반쪽 돌",
+      "op": "/2",
+      "rare": false,
+      "rule": "짝수에만, 결과 2 이상"
+    },
+    {
+      "id": "times3",
+      "name": "세 배 돌",
+      "op": "x3",
+      "rare": true,
+      "rule": "결과 40 이하"
+    },
+    {
+      "id": "third",
+      "name": "삼등분 돌",
+      "op": "/3",
+      "rare": true,
+      "rule": "3의 배수에만, 결과 2 이상"
+    },
+    {
+      "id": "mic",
+      "name": "합창 마이크",
+      "treasure": true,
+      "effect": "이 친구가 합창에 끼면 인원 +1"
+    },
+    {
+      "id": "glove",
+      "name": "손잡기 장갑",
+      "treasure": true,
+      "effect": "이 친구와 이웃 사이 손잡기 보호막 2배(상한 250 그대로)"
+    },
+    {
+      "id": "bag",
+      "name": "분신 주머니",
+      "treasure": true,
+      "effect": "부자가 아니어도 쓰러지면 곱셈 짝 꼬마 둘(1×n뿐인 단단 수는 효과 없음, 부자 꺼져 있으면 4분의 1 힘)"
+    }
+  ],
+  "itemRules": {
+    "slots": 2,
+    "secondSlotOpensRound": 6,
+    "applyOrder": "왼쪽 칸부터",
+    "stoneCapPerGame": 5,
+    "overflowGold": 2,
+    "bagSlots": 6,
+    "freeRemoveInPrep": true,
+    "lockedInBattle": true,
+    "notBuyable": true,
+    "warnIfFamiliesOff": 2
+  },
+  "economy": {
+    "startGold": 0,
+    "firstPickFree1Cost": true,
+    "baseIncome": 5,
+    "interest": {
+      "per": 10,
+      "max": 2
+    },
+    "streak": {
+      "win": {
+        "2": 1,
+        "3": 1,
+        "4plus": 2
+      },
+      "loss": {
+        "2": 1,
+        "3": 2,
+        "4plus": 3
+      }
+    },
+    "winBonus": 0,
+    "pveWinGold": 2,
+    "reroll": 2,
+    "xp": {
+      "cost": 4,
+      "amount": 4,
+      "autoPerRound": 2,
+      "autoFromRound": 2,
+      "toNext": {
+        "3": 2,
+        "4": 6,
+        "5": 10,
+        "6": 16,
+        "7": 24
+      },
+      "cumulative": {
+        "4": 2,
+        "5": 8,
+        "6": 18,
+        "7": 34,
+        "8": 58
+      }
+    },
+    "sellRefund": "산 값 그대로(1성 값, 2성 값×3, 3성 값×9)",
+    "levels": [
+      3,
+      8
+    ],
+    "bench": 8,
+    "shopOdds": {
+      "3": [
+        75,
+        25,
+        0,
+        0,
+        0
+      ],
+      "4": [
+        55,
+        35,
+        10,
+        0,
+        0
+      ],
+      "5": [
+        40,
+        35,
+        20,
+        5,
+        0
+      ],
+      "6": [
+        21,
+        35,
+        28,
+        12,
+        4
+      ],
+      "7": [
+        15,
+        25,
+        33,
+        20,
+        7
+      ],
+      "8": [
+        10,
+        18,
+        30,
+        28,
+        14
+      ]
+    },
+    "pool": {
+      "1": {
+        "units": [
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "copies": 18
+      },
+      "2": {
+        "units": [
+          8,
+          9,
+          10,
+          11,
+          15,
+          16
+        ],
+        "copies": 15
+      },
+      "3": {
+        "units": [
+          12,
+          13,
+          17,
+          18,
+          21
+        ],
+        "copies": 12
+      },
+      "4": {
+        "units": [
+          1,
+          20,
+          24,
+          25,
+          28
+        ],
+        "copies": 10
+      },
+      "5": {
+        "units": [
+          30,
+          36
+        ],
+        "copies": 9
+      },
+      "total": 326
+    },
+    "shopDraw": "코스트를 확률로 → 그 코스트에서 남은 장수 비례. 다 떨어졌으면 한 단계 낮은 코스트"
+  },
+  "scoring": {
+    "name": "메달",
+    "pvp": {
+      "win": 3,
+      "draw": 2,
+      "loss": 1,
+      "perDefeatedEnemy": 1,
+      "perDefeatedMax": 3,
+      "finalStageWinBonusRounds": [
+        11,
+        12
+      ],
+      "finalStageWinBonus": 1
+    },
+    "pve": {
+      "win": 2,
+      "loss": 1
+    },
+    "rank": [
+      "메달",
+      "이긴 횟수",
+      "마지막 전투 살아남은 친구 수"
+    ],
+    "public": [
+      "1등 왕관",
+      "모두에게 칭찬 배지 1개"
+    ],
+    "private": [
+      "내 메달 수",
+      "나의 기록 카드"
+    ]
+  },
+  "rounds": {
+    "normal": [
+      {
+        "r": 1,
+        "type": "pve",
+        "enemy": "슬라임 2·3",
+        "reward": "더하기/빼기 돌 중 1"
+      },
+      {
+        "r": 2,
+        "type": "pve",
+        "enemy": "슬라임 2·3·4",
+        "reward": "두 배/반쪽 돌 중 1"
+      },
+      {
+        "r": 3,
+        "type": "pvp"
+      },
+      {
+        "r": 4,
+        "type": "pvp"
+      },
+      {
+        "r": 5,
+        "type": "pvp"
+      },
+      {
+        "r": 6,
+        "type": "pve",
+        "enemyPool": [
+          "도깨비 대장 12 + 3·4",
+          "트럭 거미 18 + 2·9"
+        ],
+        "box": [
+          "보물1+돌1",
+          "돌2",
+          "3골드 카드+돌1"
+        ]
+      },
+      {
+        "r": 7,
+        "type": "pvp"
+      },
+      {
+        "r": 8,
+        "type": "pvp"
+      },
+      {
+        "r": 9,
+        "type": "pvp"
+      },
+      {
+        "r": 10,
+        "type": "pve",
+        "enemyPool": [
+          "구구단 드래곤 9 + 3·6",
+          "7단 해적 21 + 3·7"
+        ],
+        "box": [
+          "희귀 돌1+보물1",
+          "돌1+4골드 카드",
+          "돌1+보물1"
+        ]
+      },
+      {
+        "r": 11,
+        "type": "pvp"
+      },
+      {
+        "r": 12,
+        "type": "pvp",
+        "finale": true
+      }
+    ],
+    "short": {
+      "rounds": 8,
+      "pve": [
+        1,
+        5
+      ],
+      "box": [
+        5
+      ]
+    },
+    "prepSec": {
+      "solo": 30,
+      "multi": 40,
+      "relaxed": 60,
+      "round1": 45,
+      "boxExtra": 10
+    },
+    "consolationBox": "3연패 때 본인만, 한 판 1번, 돌 1(상한 넘으면 2골드)"
+  },
+  "ai": {
+    "easy": {
+      "name": "똑딱이",
+      "random": true,
+      "alwaysMerge": true,
+      "noReroll": true
+    },
+    "normal": {
+      "name": "척척이",
+      "interestKeep": [
+        10,
+        20
+      ],
+      "levelTargets": {
+        "2": 4,
+        "5": 5,
+        "7": 6,
+        "9": 7,
+        "11": 8
+      }
+    },
+    "hard": {
+      "name": "번뜩이",
+      "simsPerPrep": 40,
+      "secondBestChance": 0.1
+    },
+    "easyNormalRubberBand": true
+  },
+  "simTargets": {
+    "powerIndex": [
+      0.85,
+      1.15
+    ],
+    "cardWinRate": [
+      0.44,
+      0.58
+    ],
+    "battleMedianBeats": [
+      30,
+      36
+    ],
+    "timeoutMax": 0.08,
+    "easyFirstGameWin": 0.7
+  }
+}
