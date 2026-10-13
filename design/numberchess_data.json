@@ -405,7 +405,7 @@
     },
     {
       "id": "hunter",
-      "name": "사냥꾼",
+      "name": "헌터",
       "icon": "활",
       "tiers": [
         2,
@@ -450,7 +450,7 @@
     },
     {
       "id": "singer",
-      "name": "가수",
+      "name": "싱어",
       "icon": "음표",
       "tiers": [
         2,
@@ -472,7 +472,7 @@
     },
     {
       "id": "healer",
-      "name": "치료사",
+      "name": "힐러",
       "icon": "하트 반창고",
       "tiers": [
         2,
@@ -568,21 +568,21 @@
     },
     {
       "n": 5,
-      "name": "별이",
-      "title": "별빛 마법사",
-      "animal": "꼬마 마법사",
+      "name": "오롱이",
+      "title": "불가사리 마법사",
+      "animal": "불가사리",
       "role": "mage",
       "cost": 1,
       "hp": 660,
       "atk": 17,
       "skill": {
-        "id": "meteor",
+        "id": "starfish",
         "type": "damage",
         "coef": 14,
         "target": "체력이 가장 많은 적",
         "stunDiv": 5
       },
-      "line": "하나, 둘, 셋, 넷, 다섯, 반짝!"
+      "line": "다섯 팔 빙글빙글, 얍!"
     },
     {
       "n": 6,
@@ -776,7 +776,7 @@
     {
       "n": 17,
       "name": "맴순이",
-      "title": "17년 매미 가수",
+      "title": "17년 매미 싱어",
       "animal": "매미",
       "role": "singer",
       "cost": 3,
@@ -874,7 +874,7 @@
     {
       "n": 25,
       "name": "빙고리",
-      "title": "빙고 너구리 사냥꾼",
+      "title": "빙고 너구리 헌터",
       "animal": "너구리",
       "role": "hunter",
       "cost": 4,
