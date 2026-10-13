@@ -39,6 +39,9 @@ export interface BoardUnit {
   row: 0 | 1; // 0 = 앞줄, 1 = 뒷줄
   col: number; // 0~4
   items?: ItemId[];
+  /** 몬스터 등 체력·공격 보정(%) */
+  hpPct?: number;
+  atkPct?: number;
 }
 
 export type Winner = TeamIndex | 'draw';

@@ -8,6 +8,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         balance: resolve(__dirname, 'balance.html'),
+        play: resolve(__dirname, 'play.html'),
       },
     },
   },

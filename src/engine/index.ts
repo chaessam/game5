@@ -4,3 +4,4 @@ export * from './data';
 export * from './battle';
 export * from './log';
 export * from './rng';
+export * from './describe';

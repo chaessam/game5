@@ -100,7 +100,7 @@ function makeFighters(board: readonly BoardUnit[], team: TeamIndex, cfg: Balance
     const stones = items.filter(isStone);
     const res = applyStones(b.char, stones);
     if (!res.ok) throw new Error(`팀 ${team} ${b.char}번: ${res.expr} — ${res.reason}`);
-    const hp = def.hp * b.star;
+    const hp = Math.floor((def.hp * b.star * (b.hpPct ?? 100)) / 100);
     return {
       id: team * 100 + i,
       team,
@@ -113,7 +113,7 @@ function makeFighters(board: readonly BoardUnit[], team: TeamIndex, cfg: Balance
       items,
       maxHp: hp,
       hp,
-      atk: Math.floor((def.atk * b.star * cfg.atkPct) / 100),
+      atk: Math.floor((def.atk * b.star * cfg.atkPct * (b.atkPct ?? 100)) / 10000),
       shield: 0,
       row: b.row,
       col: b.col,
