@@ -414,8 +414,19 @@ function hardPrep(g: GameState, p: PlayerState) {
   p.ai = { ...(p.ai ?? {}), keepEmpty: false };
 }
 
+/** 친구 유령: 그 친구가 그 라운드에 실제로 둔 판(기록보다 라운드가 길면 마지막 판) */
+function ghostPrep(g: GameState, p: PlayerState) {
+  const rounds = p.ghost!;
+  const b = rounds[Math.min(g.round - 1, rounds.length - 1)] ?? [];
+  p.board.clear();
+  for (const u of b) p.board.set(cellKey(u.row, u.col), { uid: g.nextUid++, char: u.char, star: u.star, items: (u.items ?? []).slice(0, 2) });
+  p.bench = Array(ECON.benchSize).fill(null);
+  p.ai = { ...(p.ai ?? {}), keepEmpty: true };
+}
+
 export function botPrep(g: GameState, p: PlayerState) {
-  if (p.difficulty === 'hard') hardPrep(g, p);
+  if (p.ghost) ghostPrep(g, p);
+  else if (p.difficulty === 'hard') hardPrep(g, p);
   else if (p.difficulty === 'normal') normalPrep(g, p);
   else easyPrep(g, p);
 }

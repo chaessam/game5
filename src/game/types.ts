@@ -33,6 +33,8 @@ export interface PlayerState {
   isBot: boolean;
   difficulty: Difficulty;
   ai?: BotMemory;
+  /** 친구 유령: 라운드별 보드(같은 학교 친구가 실제로 둔 판). 있으면 상점 대신 이 판으로 싸운다 */
+  ghost?: import('../engine/types').BoardUnit[][];
   gold: number;
   level: number;
   xp: number;

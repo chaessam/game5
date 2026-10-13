@@ -8,7 +8,7 @@ import { formatBattleLog } from '../engine/log';
 import type { BoardUnit, FamilyId, RoleId } from '../engine/types';
 import {
   advance, boardCount, buy, buyXp, cellKey, chooseFreePick, chooseReward, createGame, currentPlan, findUnit,
-  income, move, opponentOf, ownedCount, ranking, reroll, resolveRound, sell, sellValue, toggleLock,
+  allUnits, income, move, opponentOf, ownedCount, ranking, reroll, resolveRound, sell, sellValue, toBattleBoard, toggleLock,
   type RoundOutcome,
 } from '../game/game';
 import { botFreePick, botPrep, botRewards } from '../game/bot';
@@ -23,6 +23,8 @@ import { FAM_COLOR, ROLE_COLOR } from './art/parts';
 import { BattleView } from './battle-view';
 import { unlockAudio } from './sound';
 import { battleInsight, momentText, type Moment } from './insight';
+import { bindLoginInputs, handleLoginAction, loginBoxHtml, refreshMe } from './login';
+import { fetchGhosts, getAuth, saveGhost, saveRecord } from '../net/api';
 
 // ---------------- 상태 ----------------
 let g: GameState | null = null;
@@ -37,6 +39,12 @@ let battle: BattleView | null = null;
 let botsPreppedRound = -1;
 /** 이번 판에서 만든 가장 큰 합창(게임 끝 '오늘의 수학 발견') */
 let bestChorus: (Moment & { round: number }) | null = null;
+/** 기록·유령 저장용: 라운드마다 내 판, 만난 친구, 3성, 변신 */
+let myBoards: BoardUnit[][] = [];
+const met = new Set<number>();
+const three = new Set<number>();
+const morphs = new Set<string>();
+let recordSaved = false;
 let modal: { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | null = { type: 'start' };
 type StartDiff = Difficulty | 'mix';
 let startDiff: StartDiff = 'easy';
@@ -321,7 +329,7 @@ function scoutsHtml(p: PlayerState) {
     const av = top ? charArt(top.char, 30, { star: top.star, noNumber: true, noGems: true }) : '<span style="width:30px;text-align:center">🙂</span>';
     const vs = q.id === vsId;
     const tag = vs ? `<em>${o?.kind === 'pvp' && o.mirror ? '거울 상대' : '이번 상대'}</em>` : '';
-    const diff = q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : '';
+    const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : '';
     return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
@@ -388,6 +396,7 @@ function modalHtml(): string {
   if (!g || modal?.type === 'start') {
     return `<div class="modal"><div class="box">
       <h2>숫자체스: 합창 대작전</h2>
+      ${loginBoxHtml()}
       <p>숫자 친구를 사 모아 덱을 짜요. <b>3번 친구는 3단 박(3·6·9…)에 노래</b>하고, 같은 박에 여럿이 노래하면 <b>합창!</b> 가문은 숫자가, 직업은 캐릭터가 정해요.</p>
       <div class="diffs">컴퓨터 난이도
         ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 싸워 보고 골라요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
@@ -397,6 +406,7 @@ function modalHtml(): string {
         <button class="choice" data-action="start" data-bots="3" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 3명과</b><br>12라운드 (약 12분)</button>
         <button class="choice" data-action="start" data-bots="1" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 1명과</b><br>12라운드</button>
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 (약 8분)</button>
+        ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
       <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a></p>
     </div></div>`;
@@ -525,6 +535,11 @@ function newGame(bots: number, short: boolean) {
   modal = null;
   botsPreppedRound = -1;
   bestChorus = null;
+  myBoards = [];
+  met.clear();
+  three.clear();
+  morphs.clear();
+  recordSaved = false;
   battle?.stop();
   battle = null;
 }
@@ -544,6 +559,8 @@ function onReady() {
   botRewards(g);
   selected = null;
   const p = me();
+  myBoards.push(toBattleBoard(p));
+  for (const u of p.board.values()) if (numberOf(u) !== u.char) morphs.add(`${u.char}>${numberOf(u)}`);
   const fight = outcome.fights.find((f) => f.a === p.id || (!f.mirror && f.b === p.id));
   if (fight) {
     const big = battleInsight(fight.result, fight.a === p.id ? 0 : 1).bigChorus;
@@ -587,6 +604,11 @@ app.addEventListener('click', (ev) => {
   const el = (ev.target as HTMLElement).closest<HTMLElement>('[data-action]');
   if (!el) return;
   const a = el.dataset.action!;
+  if (handleLoginAction(a, el, render)) return;
+  if (a === 'startghost') {
+    void startGhostGame();
+    return;
+  }
   if (a === 'diff') {
     startDiff = el.dataset.d as StartDiff;
     try {
@@ -714,8 +736,43 @@ app.addEventListener('click', (ev) => {
       break;
   }
   prepBots();
+  track();
   render();
 });
+
+/** 만난 친구·3성 모으기, 판이 끝나면 기록·유령 저장(들어가 있을 때만) */
+function track() {
+  if (!g) return;
+  for (const u of allUnits(me())) {
+    met.add(u.char);
+    if (u.star === 3) three.add(u.char);
+  }
+  if (g.phase === 'over' && !recordSaved && getAuth()) {
+    recordSaved = true;
+    const rank = ranking(g).findIndex((q) => q.id === 0) + 1;
+    void saveRecord({
+      rank, players: g.players.length, medals: me().medals,
+      bestChorus: bestChorus ? { beat: bestChorus.beat, nums: bestChorus.nums, count: bestChorus.count } : null,
+      collection: { met: [...met], three: [...three], morphs: [...morphs] },
+    }).then(() => refreshMe());
+    if (myBoards.length && !g.players.some((q) => q.ghost)) void saveGhost(myBoards, me().level);
+  }
+}
+
+async function startGhostGame() {
+  const r = await fetchGhosts(3);
+  if (!r.ok || !r.ghosts.length) {
+    toast(r.ok ? '아직 우리 학교 친구 유령이 없어요. 친구들이 한 판씩 하면 생겨요!' : (r.error ?? '유령을 불러오지 못했어요.'));
+    return render();
+  }
+  newGame(r.ghosts.length, false);
+  r.ghosts.forEach((gh, i) => {
+    const q = g!.players[i + 1];
+    q.ghost = gh.rounds;
+    q.name = `👻 ${gh.nick}`;
+  });
+  render();
+}
 
 // 마우스 끌어 놓기(태블릿은 누르기 → 누르기)
 app.addEventListener('dragstart', (ev) => {
@@ -763,6 +820,8 @@ app.addEventListener('drop', (ev) => {
   render();
 });
 
+bindLoginInputs(app);
+void refreshMe().then(() => render());
 render();
 
 // 개발·테스트용: 콘솔에서 상태 보기

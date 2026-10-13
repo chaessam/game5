@@ -149,6 +149,22 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .pv-song small { color: var(--muted); }
 .pv-warn { margin: 8px 0; padding: 8px 10px; border-radius: 10px; background: rgba(255,107,129,.2); border: 2px solid var(--bad); font-weight: 800; }
 
+/* 들어가기 */
+.loginbox { background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }
+.loginbox.in { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.loginbox .lrow { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; }
+.loginbox input { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #120d36; color: #fff; padding: 9px 10px; font: inherit; }
+.loginbox .sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.loginbox .school { position: relative; }
+.slist { display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 5; max-height: 220px; overflow: auto; margin: 2px 0 0; padding: 4px; list-style: none; background: #1d1650; border: 1px solid var(--gold); border-radius: 10px; }
+.slist.show { display: block; }
+.slist li { display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+.slist li:hover { background: rgba(255,255,255,.08); }
+.slist li small { color: var(--muted); }
+.slist li.dup span { color: var(--gold); }
+.slist li.info { cursor: default; color: var(--muted); }
+.lmsg { margin-top: 6px; color: #ffb3c1; font-weight: 700; font-size: 13px; }
+
 /* 시작 화면 난이도 */
 .diffs { display: grid; grid-template-columns: auto repeat(4, minmax(0, 1fr)); gap: 8px; align-items: center; margin: 12px 0 0; font-weight: 800; color: var(--muted); font-size: 14px; }
 .diff { border: 2px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.05); padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
