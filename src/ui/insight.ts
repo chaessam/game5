@@ -70,7 +70,7 @@ export function battleInsight(r: BattleResult, side: 0 | 1): Insight {
 
   const badges: string[] = [];
   if (bigChorus && bigChorus.count >= 4) badges.push('🎵 합창 대장');
-  if (primeSolos >= 2) badges.push('◆ 단단 쾅');
+  if (primeSolos >= 2) badges.push('◆ 다이아 쾅');
   if (handshakes >= 4) badges.push('🤝 손잡기 장인');
   if (revived) badges.push('✨ 다시 일어섰어요');
   if (win && r.beats <= 24) badges.push('⚡ 빠른 승리');

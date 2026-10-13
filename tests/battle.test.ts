@@ -64,7 +64,7 @@ describe('결정성과 대칭', () => {
   });
 });
 
-describe('합창과 단단', () => {
+describe('합창과 다이아', () => {
   const wall: BoardUnit[] = [{ char: 1, star: 3, row: 0, col: 0 }];
 
   it('12박에 2·3·4·6이 함께 노래하면 4명 합창 = 2.25배', () => {
@@ -75,7 +75,7 @@ describe('합창과 단단', () => {
     );
     expect(chorusAt(r.events, 12, 0)).toMatchObject({ count: 4 });
     const songs = r.events.filter((e) => e.type === 'song' && e.beat === 12);
-    // 2·3은 단단이지만 4·6이 끼어 단단끼리가 아니다 → 4명 합창 225%
+    // 2·3은 다이아이지만 4·6이 끼어 다이아끼리가 아니다 → 4명 합창 225%
     for (const s of songs) expect(s).toMatchObject({ mult: 225 });
   });
 
@@ -84,12 +84,12 @@ describe('합창과 단단', () => {
     expect(chorusAt(r.events, 3, 0)).toMatchObject({ count: 2 });
   });
 
-  it('단단끼리만 노래하면 단단 배율(합창보다 크면): 2·3 → 6박 1.75배', () => {
+  it('다이아끼리만 노래하면 다이아 배율(합창보다 크면): 2·3 → 6박 1.75배', () => {
     const r = runBattle([{ char: 2, star: 1, row: 1, col: 0 }, { char: 3, star: 1, row: 1, col: 3 }], wall, { log: true });
     expect(chorusAt(r.events, 6, 0)).toMatchObject({ count: 2, prime: true });
     const songs = r.events.filter((e) => e.type === 'song' && e.beat === 6);
     for (const s of songs) expect(s).toMatchObject({ mult: 175 });
-    // 혼자 노래하는 3박도 단단끼리 → 1.75배
+    // 혼자 노래하는 3박도 다이아끼리 → 1.75배
     expect(r.events.find((e) => e.type === 'song' && e.beat === 3)).toMatchObject({ mult: 175 });
   });
 
@@ -101,7 +101,7 @@ describe('합창과 단단', () => {
     );
     // 7박: 7(이웃) + 하나쌤 2명 몫 = 3
     expect(chorusAt(r.events, 7, 0)).toMatchObject({ count: 3, prime: false });
-    // 11박: 11은 하나쌤과 붙어 있지 않다 → 혼자, 단단끼리(7·11 = 단단 2명 켜짐) → 두 배
+    // 11박: 11은 하나쌤과 붙어 있지 않다 → 혼자, 다이아끼리(7·11 = 다이아 2명 켜짐) → 두 배
     expect(chorusAt(r.events, 11, 0)).toMatchObject({ count: 1, prime: true });
   });
 });

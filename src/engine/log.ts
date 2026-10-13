@@ -26,10 +26,10 @@ export function formatEvent(e: BattleEvent, byId: Map<number, Fighter>): string 
     case 'familyBeat':
       return e.family === 'tri'
         ? `${TEAM[e.team]} 세모 방패 ${e.value}까지 채움`
-        : `${TEAM[e.team]} 다섯손 공격력 +${e.value}`;
+        : `${TEAM[e.team]} 하이파이브 공격력 +${e.value}`;
     case 'chorus': {
       const who = e.singers.map((id) => byId.get(id)?.num ?? '?').join('·');
-      const tag = e.prime ? ' [단단끼리]' : e.count >= 2 ? ` [합창 ${e.count}명]` : '';
+      const tag = e.prime ? ' [다이아끼리]' : e.count >= 2 ? ` [합창 ${e.count}명]` : '';
       return `${TEAM[e.team]} 노래: ${who}${tag}`;
     }
     case 'song':

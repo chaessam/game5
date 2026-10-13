@@ -218,7 +218,7 @@ function detailHtml(p: PlayerState) {
       <dt>노래 박</dt><dd>♪ ${[1, 2, 3, 4, 5].map((k) => char * k).filter((b) => b <= 48).join('·')}박 (${char}의 배수)</dd>
       <dt>노래</dt><dd>${esc(songText(u))}<br><small class="sub">값은 1성 / 2성 / 3성</small></dd>
       <dt>체력·공격</dt><dd>${u.hp * star} · ${u.atk * star} (${star}성)</dd>
-      <dt>약수</dt><dd><div class="divs">${d.map((x) => `<span>${x}</span>`).join('')}</div><small class="sub">${d.length}개${d.length === 2 ? ' → 단단' : d.length >= 6 ? ' → 부자' : ''}</small></dd>
+      <dt>약수</dt><dd><div class="divs">${d.map((x) => `<span>${x}</span>`).join('')}</div><small class="sub">${d.length}개${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}</small></dd>
       ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}💥 ${pair[0]} + ${pair[1]} (${pair[0]} × ${pair[1]} = ${char})</dd>` : ''}
       <dt>남은 카드</dt><dd>${g!.pool[char]}장 남음</dd>
       <dt>아이템 칸</dt><dd>2칸 (끼우기는 곧 열려요)</dd>

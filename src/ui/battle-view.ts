@@ -273,15 +273,15 @@ export class BattleView {
       }
       playSong(ns, mine, e.count >= 2);
       let line: string;
-      if (e.prime) line = `◆ 단단${e.count >= 2 ? '끼리 합창' : ' 혼자 노래'}! ${list} (${mult})`;
+      if (e.prime) line = `◆ 다이아${e.count >= 2 ? '끼리 합창' : ' 혼자 노래'}! ${list} (${mult})`;
       else if (e.count >= 2) line = `🎵 합창 ${e.count}명 몫! ${list} (${mult}) — ${beat}${eunNeun(beat)} ${list}의 배수`;
       else line = `♪ ${this.name(e.singers[0])} 노래`;
       if (mine) {
-        if (e.count >= 2 || e.prime) this.banner(`${e.prime ? '◆ 단단 쾅!' : `🎵 합창 ${e.count}명!`} <small>${list}</small>`, 'mine');
+        if (e.count >= 2 || e.prime) this.banner(`${e.prime ? '◆ 다이아 쾅!' : `🎵 합창 ${e.count}명!`} <small>${list}</small>`, 'mine');
         cap = `<b>${beat}박</b> 우리 ${line.replace(/^♪ /, '')}`;
         lines.push(`<span class="me">우리</span> ${line}`);
       } else {
-        if (e.count >= 2) this.banner(`상대 ${e.prime ? '단단 합창' : `합창 ${e.count}명`} <small>${list}</small>`, 'foe');
+        if (e.count >= 2) this.banner(`상대 ${e.prime ? '다이아 합창' : `합창 ${e.count}명`} <small>${list}</small>`, 'foe');
         if (!cap) cap = `<b>${beat}박</b> 상대 ${line.replace(/^♪ 상대 /, '')}`;
         lines.push(`<span class="op">상대</span> ${line.replace('상대 ', '')}`);
       }
@@ -332,7 +332,7 @@ export class BattleView {
           if (e.coins) lines.push(`💰 ${this.name(e.unit)} 약수 금화 ${e.coins}개 (${e.nums.join('·')})`);
           break;
         case 'familyBeat':
-          if (e.team === this.side) lines.push(e.family === 'tri' ? `▲ 세모 박: 세모 방패 ${e.value}` : `✋ 다섯손 박: 공격 +${e.value}`);
+          if (e.team === this.side) lines.push(e.family === 'tri' ? `▲ 세모 박: 세모 방패 ${e.value}` : `✋ 하이파이브 박: 공격 +${e.value}`);
           break;
         default:
           break;

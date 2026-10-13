@@ -6,10 +6,10 @@
 
 ```bash
 npm install
-npm test             # 단위 테스트(수학표, 노래 값, 결정성·대칭, 합창·단단·멈춤·분열)
+npm test             # 단위 테스트(수학표, 노래 값, 결정성·대칭, 합창·다이아·멈춤·분열)
 npm run dev          # http://localhost:5173/play.html — 게임(컴퓨터와 한 판), /dogam.html — 캐릭터 도감, /balance.html — 덱 대 덱 자동 대전
 npm run balance      # 밸런스 리포트(터미널). --quick 빠르게, --out design/balance-report.md 저장
-npm run battle -- "대합창" "단단 독창"   # 두 덱의 전투 글자 로그 (--basic 이면 기본 공격도)
+npm run battle -- "대합창" "다이아 독창"   # 두 덱의 전투 글자 로그 (--basic 이면 기본 공격도)
 npx tsx tools/tune.ts tools/variants.json --mid   # 수치 조정 실험 비교
 npx tsx tools/gen-tables.ts > design/수치표.md    # 수치표 다시 만들기
 ```

@@ -42,8 +42,8 @@ export interface FamilyDef {
 export const FAMILIES: Record<FamilyId, FamilyDef> = {
   even: { id: 'even', name: '짝꿍', icon: '●●', rule: '2의 배수(짝수). 짝수 박에 \'짝!\' 한 대 더' },
   tri: { id: 'tri', name: '세모', icon: '▲', rule: '3의 배수. 3단 박마다 세모 방패를 채워요' },
-  five: { id: 'five', name: '다섯손', icon: '✋', rule: '5의 배수(끝자리 0·5). 5단 박마다 공격력 쑥!' },
-  prime: { id: 'prime', name: '단단', icon: '◆', rule: '약수가 딱 2개(1과 자기)인 수. 그 박에 단단 친구만 노래하면 쾅! 다이아 몸이라 덜 아파요' },
+  five: { id: 'five', name: '하이파이브', icon: '✋', rule: '5의 배수(끝자리 0·5). 5단 박마다 하이파이브! 공격력 쑥!' },
+  prime: { id: 'prime', name: '다이아', icon: '◆', rule: '약수가 딱 2개(1과 자기)인 수. 그 박에 다이아 친구만 노래하면 쾅! 단단한 몸이라 덜 아파요' },
   rich: { id: 'rich', name: '부자', icon: '♛', rule: '약수가 6개 이상. 쓰러지면 곱셈 짝 꼬마 둘로 (12 → 3과 4)' },
 };
 

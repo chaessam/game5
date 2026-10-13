@@ -10,7 +10,7 @@ describe('수학표 1~40', () => {
     expect(rows.filter((r) => r.divisorCount === 9).map((r) => r.n)).toEqual([36]);
     expect(rows.filter((r) => r.divisorCount === 8).map((r) => r.n)).toEqual([24, 30, 40]);
     expect(divisorCount(16)).toBe(5); // 부자에 하나 모자람
-    expect(divisorCount(1)).toBe(1); // 1은 단단 아님
+    expect(divisorCount(1)).toBe(1); // 1은 다이아 아님
   });
 
   it('부자(약수 6개 이상) 수는 12·18·20·24·28·30·32·36·40', () => {
@@ -18,7 +18,7 @@ describe('수학표 1~40', () => {
     expect(rich).toEqual([12, 18, 20, 24, 28, 30, 32, 36, 40]);
   });
 
-  it('단단(약수 딱 2개)은 2~40의 1과 자기로만 나눠지는 수', () => {
+  it('다이아(약수 딱 2개)은 2~40의 1과 자기로만 나눠지는 수', () => {
     const prime = mathTable(40).filter((r) => r.families.includes('prime')).map((r) => r.n);
     expect(prime).toEqual([2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]);
   });
@@ -108,7 +108,7 @@ describe('로스터와 시너지 표', () => {
     expect(ROLES.hunter.name).toBe('헌터');
   });
 
-  it('가문 소속 인원(로스터 24명 기준): 짝꿍 13, 세모 10, 다섯손 6, 단단 7, 부자 7', () => {
+  it('가문 소속 인원(로스터 24명 기준): 짝꿍 13, 세모 10, 하이파이브 6, 다이아 7, 부자 7', () => {
     const count = (f: string) => UNIT_IDS.filter((n) => familiesOf(n).includes(f as never)).length;
     expect([count('even'), count('tri'), count('five'), count('prime'), count('rich')]).toEqual([13, 10, 6, 7, 7]);
   });

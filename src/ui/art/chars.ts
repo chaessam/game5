@@ -14,7 +14,7 @@ export interface CharArt {
   color: string;
   /** 몸에 숨은 숫자 설명 */
   hide: string;
-  /** 단단일 때 반짝이 자리 */
+  /** 다이아(약수 2개)일 때 반짝이 자리 */
   sparkles: [number, number][];
   /** 부자일 때 왕관 자리 [x, y, 기울기] */
   crown: [number, number, number];
@@ -55,7 +55,7 @@ export const ART: Record<number, CharArt> = {
 
   // 2 토토와 끼끼 · 쌍둥이 토끼 — 토끼 2마리
   2: {
-    color: '#FFE6F0', hide: '토끼 2마리 — 짝수이면서 단단한 수는 2 하나뿐!',
+    color: '#FFE6F0', hide: '토끼 2마리 — 짝수이면서 다이아인 수는 2 하나뿐!',
     sparkles: [[24, 90], [96, 90], [60, 46]], crown: [60, 30, 0],
     draw() {
       const bunny = (cx: number, fur: string, acc: string) => `
@@ -452,7 +452,7 @@ export const ART: Record<number, CharArt> = {
 
   // 17 맴순이 · 17년 매미 싱어
   17: {
-    color: '#A4E36A', hide: '땅속에서 17년 (17은 단단한 수)',
+    color: '#A4E36A', hide: '땅속에서 17년 (17은 다이아: 약수가 1과 17뿐)',
     sparkles: [[18, 60], [102, 60], [52, 92]], crown: [60, 18, 0],
     draw() {
       const g = '#A4E36A';
