@@ -27,6 +27,7 @@ import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe }
 import { QUIZ, TUT_ROUNDS, TUT_STEPS, createTutorial, fixTutorialRewards, prepareTutorialRound, stepDone, tutorialAllows, type TutTalk } from '../game/tutorial';
 import { readAloud } from './battle-view';
 import { saveProgress } from '../net/api';
+import { TIPS, battleTips, markSeen, mergeSeen, prepTip, prepTipLine, seenTips } from './tips';
 import { fetchGhosts, getAuth, saveGhost, saveRecord } from '../net/api';
 
 // ---------------- 상태 ----------------
@@ -67,7 +68,9 @@ const tutorialDoneLocal = () => {
     return false;
   }
 };
-let modal: { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | null = { type: 'start' };
+type Modal = { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | { type: 'notebook'; back: Modal | null } | null;
+let modal: Modal = { type: 'start' };
+let nbNum = 12;
 type StartDiff = Difficulty | 'mix';
 let startDiff: StartDiff = 'easy';
 try {
@@ -440,6 +443,7 @@ function scoutHtml(pid: number): string {
 
 // ---------------- 모달 ----------------
 function modalHtml(): string {
+  if (modal?.type === 'notebook') return notebookHtml();
   if (!g || modal?.type === 'start') {
     return `<div class="modal"><div class="box">
       <h2>숫자체스: 합창 대작전</h2>
@@ -458,7 +462,7 @@ function modalHtml(): string {
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 (약 8분)</button>
         ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
-      <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a></p>
+      <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a> · <a href="#" data-action="notebook" style="color:var(--gold)">📘 수학 수첩</a></p>
     </div></div>`;
   }
   if (battle) return '';
@@ -531,7 +535,7 @@ function render() {
   const need = ECON.xpToNext[p.level];
   const center = battle
     ? `<div class="panel bv-host" id="bvhost"></div>`
-    : `${tutDocked() ? `<div class="panel tut dock">${tutBubbleInner()}</div>` : `<div class="panel opp">${scoutsHtml(p)}</div>`}
+    : `${tutDocked() ? `<div class="panel tut dock">${tutBubbleInner()}</div>` : tipDocked(p) ? tipDockHtml(p) : `<div class="panel opp">${scoutsHtml(p)}</div>`}
       <div class="panel board">${boardHtml(p)}</div>
       <div class="cap">놓을 수 있는 자리 <b>${'●'.repeat(boardCount(p))}${'○'.repeat(Math.max(0, p.level - boardCount(p)))}</b> (레벨 ${p.level} → ${p.level}명) · 친구를 누르고 → 빈칸을 누르면 옮겨요</div>
       <div class="panel bench">${benchHtml(p)}</div>`;
@@ -546,6 +550,7 @@ function render() {
       <div class="lv"><b class="jua" style="font-size:18px">레벨 ${p.level}</b>
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
         <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업 +4 (4골드)</button>` : '<small>최고 레벨</small>'}</div>
+      <button class="btn small ghost" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘 수첩</button>
       ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : '<button class="btn gold ready" data-action="ready">준비 완료 ▶</button>'}
     </header>
     <aside class="panel left">${syn.left}</aside>
@@ -642,7 +647,7 @@ function startBattle(outcome: RoundOutcome) {
     side,
     oppName,
     speed: tut ? 0.5 : undefined,
-    talk: tut ? tutorialTalk(outcome.round) : undefined,
+    talk: tut ? tutorialTalk(outcome.round) : battleTips,
     onDone: () => {
       battle?.stop();
       battle = null;
@@ -683,6 +688,23 @@ app.addEventListener('click', (ev) => {
   }
   if (a === 'tutorial') {
     startTutorial();
+    return render();
+  }
+  if (a === 'notebook') {
+    ev.preventDefault();
+    if (modal?.type !== 'notebook') modal = { type: 'notebook', back: modal };
+    return render();
+  }
+  if (a === 'closenb') {
+    modal = modal?.type === 'notebook' ? modal.back : null;
+    return render();
+  }
+  if (a === 'nbnum') {
+    nbNum = Number(el.dataset.n);
+    return render();
+  }
+  if (a === 'tipok') {
+    markSeen(el.dataset.id!);
     return render();
   }
   if (a === 'tutok' || a === 'quiz' || a === 'tutfinish' || a === 'tutread') {
@@ -826,6 +848,44 @@ app.addEventListener('click', (ev) => {
   render();
 });
 
+// ---------------- 처음 보는 순간 · 수학 수첩 ----------------
+const tipDocked = (p: PlayerState) => !tut && !battle && !modal && g?.phase === 'prep' && !!prepTip(p);
+function tipDockHtml(p: PlayerState): string {
+  const id = prepTip(p)!;
+  return `<div class="panel tut dock"><div class="who">${charArt(1, 46, { noNumber: true, noGems: true })}</div>
+    <div class="txt">${esc(prepTipLine(id))}</div>
+    <div class="btns"><button class="btn small ghost" data-action="tutread" data-text="${esc(prepTipLine(id))}">🔊</button> <button class="btn small gold" data-action="tipok" data-id="${id}">알겠어 ▶</button></div></div>`;
+}
+
+function notebookHtml(): string {
+  const n = nbNum;
+  const d = divisors(n);
+  const fams = familiesOf(n);
+  const mult = [1, 2, 3, 4, 5, 6, 7, 8].map((k) => n * k).filter((b) => b <= 48);
+  const who = UNIT_IDS.filter((c) => c !== n && n % c === 0);
+  const seen = seenTips();
+  const pages = [
+    ['배수', '3의 배수 = 3·6·9·12… → <b>3번 친구는 3의 배수 박마다 노래</b>해요.'],
+    ['약수', '12의 약수 = 1·2·3·4·6·12 → <b>12박에는 약수 숫자 친구들이 함께 노래</b>할 수 있어요. 약수가 딱 2개면 다이아, 6개 이상이면 부자.'],
+    ['공배수 · 최소공배수', '4의 배수와 6의 배수에 모두 있는 수 = 12·24·36 → <b>4와 6이 함께 노래하는 박</b>. 가장 작은 12가 최소공배수예요.'],
+    ['공약수 · 최대공약수', `4와 6을 둘 다 나누어떨어지게 하는 수 = 1·2 → 가장 큰 2가 최대공약수 → <b>붙어 있으면 손잡기 방패 ${2 * DEFAULT_CONFIG.handshakePerGcd}</b>.`],
+    ['숫자 돌', '5 × 2 = 10: 모습·직업·성은 그대로, <b>등번호만 바뀌어요</b>. ÷ 돌은 나누어떨어질 때만 끼울 수 있어요.'],
+  ];
+  return `<div class="modal"><div class="box notebook">
+    <button class="btn small ghost close" data-action="closenb" style="float:right">닫기</button>
+    <h2>📘 수학 수첩</h2>
+    <div class="nbgrid">${pages.map(([t, b]) => `<div class="nbcard"><b class="jua">${t}</b><div>${b}</div></div>`).join('')}</div>
+    <h3 class="jua">숫자 살펴보기</h3>
+    <div class="nbnums">${Array.from({ length: 40 }, (_, i) => i + 1).map((k) => `<button class="nbn ${k === n ? 'on' : ''}" data-action="nbnum" data-n="${k}">${k}</button>`).join('')}</div>
+    <div class="hl"><b class="jua" style="font-size:20px">${n}</b> · 약수 ${d.join('·')} (${d.length}개)${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}
+      · 가문 ${fams.length ? fams.map((f) => `${famIcon(f, 14)}${FAMILIES[f].name}`).join(' ') : '없음'}
+      <br>노래하는 박(배수): ${mult.join('·')}${mult.length ? '박' : ''}${who.length ? `<br>${n}박에 함께 노래하는 친구(약수): ${who.join('·')}` : ''}</div>
+    <h3 class="jua">처음 보는 순간 말풍선 (${seen.length}/${Object.keys(TIPS).length})</h3>
+    <div class="nbtips">${Object.entries(TIPS).map(([id, t]) => (seen.includes(id) ? `<div><b>${esc(t.title)}</b> — ${esc(t.text)}</div>` : '<div class="locked">??? 아직 못 본 말풍선</div>')).join('')}</div>
+    <p style="margin-top:10px"><button class="btn ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>
+  </div></div>`;
+}
+
 // ---------------- 튜토리얼 ----------------
 function startTutorial() {
   battle?.stop();
@@ -907,10 +967,15 @@ function tutorialTalk(round: number) {
 }
 
 function tutorialAction(a: string, el: HTMLElement) {
+  if (a === 'tutread' && el.dataset.text) {
+    readAloud(el.dataset.text);
+    return;
+  }
   if (!tut) return;
   if (a === 'tutread') {
     const s = tutStep();
-    if (s) readAloud(s.text);
+    const t = el.dataset.text ?? s?.text;
+    if (t) readAloud(t);
     return;
   }
   if (a === 'tutok') {
@@ -1051,7 +1116,10 @@ app.addEventListener('drop', (ev) => {
 });
 
 bindLoginInputs(app);
-void refreshMe().then(() => render());
+void refreshMe().then(() => {
+  mergeSeen(myRecord()?.tips ?? []);
+  render();
+});
 render();
 
 // 개발·테스트용: 콘솔에서 상태 보기

@@ -169,6 +169,17 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .quiz .opt.ok { border-color: var(--good); background: rgba(62,224,127,.2); }
 .quiz .opt.no { border-color: var(--bad); background: rgba(255,107,129,.15); }
 
+/* 수학 수첩 */
+.notebook .nbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin: 8px 0; }
+.nbcard { background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; font-size: 14px; line-height: 1.5; }
+.nbcard b.jua { font-size: 18px; color: var(--gold); font-weight: 400; display: block; }
+.notebook h3 { margin: 12px 0 6px; font-weight: 400; font-size: 20px; }
+.nbnums { display: flex; flex-wrap: wrap; gap: 4px; }
+.nbn { min-width: 34px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06); font-family: 'Jua', sans-serif; padding: 3px 0; }
+.nbn.on { background: var(--gold); color: #1d1440; }
+.nbtips { display: grid; gap: 4px; font-size: 14px; }
+.nbtips .locked { color: var(--muted); }
+
 /* 들어가기 */
 .loginbox { background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 8px 0; }
 .loginbox.in { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
