@@ -20,14 +20,25 @@ describe('랭크 점수·티어', () => {
       expect(t[t.length - 1]).toBeLessThan(0);
       for (let i = 1; i < t.length; i++) expect(t[i]).toBeLessThan(t[i - 1]);
     }
-    expect(rankDelta(1, 4, 700)).toBe(30);
-    expect(rankDelta(4, 4, 700)).toBe(-20);
+    expect(rankDelta(1, 4, 700)).toBe(80);
+    expect(rankDelta(4, 4, 700)).toBe(-10);
     expect(rankDelta(1, 1, 700)).toBe(0);
   });
   it('브론즈는 잃는 점수 절반, 0점 아래로 안 내려감', () => {
-    expect(rankDelta(4, 4, 100)).toBe(-10);
-    expect(rankDelta(2, 2, 100)).toBe(-7);
-    expect(rankDelta(4, 4, 4)).toBe(-4);
+    expect(rankDelta(4, 4, 100)).toBe(-5);
+    expect(rankDelta(2, 2, 100)).toBe(-5);
+    expect(rankDelta(4, 4, 3)).toBe(-3);
     expect(rankDelta(4, 4, 0)).toBe(0);
+  });
+  it('2명 판 반만 이겨도 10판이면 한 티어(300점), 4명 판은 더 빨리', () => {
+    const play = (start: number, places: number[], players: number) => places.reduce((p, place) => p + rankDelta(place, players, p), start);
+    const half2 = [1, 2, 1, 2, 1, 2, 1, 2, 1, 2];
+    expect(rankTier(play(600, half2, 2)).id).toBe('platinum'); // 골드 → 플래티넘
+    expect(play(600, half2, 2) - 600).toBeGreaterThanOrEqual(300);
+    expect(rankTier(play(0, half2, 2)).id).toBe('silver'); // 브론즈 → 실버
+    const avg4 = [1, 2, 3, 4, 1, 2, 3, 4, 2, 3]; // 평균 2.5등
+    expect(play(600, avg4, 4) - 600).toBeGreaterThan(play(600, half2, 2) - 600);
+    // 이기기 어려운 친구(10판에 3번 이김)도 조금씩은 올라감
+    expect(play(600, [1, 2, 2, 1, 2, 2, 1, 2, 2, 2], 2)).toBeGreaterThan(600);
   });
 });

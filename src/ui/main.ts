@@ -1228,7 +1228,7 @@ function lobbyHtml(): string {
     <button class="btn small ghost close" data-action="lobbyback" style="float:right">← 처음 화면</button>
     <h2>⚔️ 온라인 대결</h2>
     <div class="hl myrank">${tierBadge(pts)} <b class="jua">${pts}점</b> <span class="sub">${t.toNext ? `다음 단계까지 ${t.toNext}점` : '가장 높은 티어!'} · 랭크 판 ${rec?.ranked ?? 0}번</span></div>
-    <p class="sub">같은 방 친구들과 동시에 겨뤄요(2~4명). 끝난 등수대로 점수를 얻거나 잃어요.<br>4명일 때 ${placePointsText(4)} <span class="nw">(브론즈는 잃는 점수 절반)</span></p>
+    <p class="sub">같은 방 친구들과 동시에 겨뤄요(2~4명). 끝난 등수대로 점수를 받아요. 꼴등만 조금 잃어요.<br>2명: ${placePointsText(2)} · 4명: ${placePointsText(4)}<br>반만 이겨도 10판쯤 하면 티어가 한 칸 올라요(300점). 사람이 많은 방일수록 더 빨리!</p>
     <h3 class="jua">들어갈 수 있는 방</h3>
     <div class="rooms">${rooms}</div>
     <div class="lobbybtns">

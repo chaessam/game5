@@ -24,11 +24,15 @@ export const TIERS: Tier[] = [
 ];
 const DIVISION_FROM = TIERS.findIndex((t) => t.id === 'master');
 
-/** 사람 수별 등수 점수(1등부터). 혼자 남은 판(1명)은 점수 없음 */
+/**
+ * 사람 수별 등수 점수(1등부터). 혼자 남은 판(1명)은 점수 없음.
+ * 학생들은 판을 많이 못 하니까 후하게: 2명 판에서 반만 이겨도(평균 +30) 10판이면 한 티어(300점).
+ * 사람이 많을수록 조금 더 빨리(3명 평균 +33, 4명 평균 +35). 꼴등만 조금 잃음.
+ */
 export const PLACE_POINTS: Record<number, number[]> = {
-  2: [20, -15],
-  3: [25, 5, -15],
-  4: [30, 15, -10, -20],
+  2: [70, -10],
+  3: [75, 35, -10],
+  4: [80, 50, 20, -10],
 };
 
 export interface TierInfo extends Tier {
