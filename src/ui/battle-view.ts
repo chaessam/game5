@@ -3,6 +3,7 @@
 import type { BattleResult, Fighter, FrameUnit } from '../engine/battle';
 import type { BattleEvent } from '../engine/types';
 import { DEFAULT_CONFIG, UNITS } from '../engine/data';
+import { josa, josaOnly } from '../shared/josa';
 import { charArt, charColor, minionArt } from './art/chars';
 import { isMuted, playDown, playEnd, playSong, playTick, setMuted, unlockAudio } from './sound';
 
@@ -33,8 +34,7 @@ export function readAloud(text: string) {
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-/** 숫자 뒤 '은/는' (2·4·5·9로 끝나면 '는') */
-const eunNeun = (n: number) => ([2, 4, 5, 9].includes(n % 10) ? '는' : '은');
+const eunNeun = (n: number) => josaOnly(n, '은/는');
 const pctText = (p: number) => (p % 100 === 0 ? `${p / 100}배` : `${(p / 100).toFixed(2).replace(/0$/, '')}배`);
 
 /** 빠르기: 1배 → 2배 → 천천히(0.5배) */
@@ -350,7 +350,7 @@ export class BattleView {
         case 'split': {
           const f = this.byId.get(e.unit)!;
           const [a, b] = nums(e.minions);
-          lines.push(`👑 ${this.name(e.unit)} → 꼬마 ${a}와 ${b} (${a} × ${b} = ${f.num})`);
+          lines.push(`👑 ${this.name(e.unit)} → 꼬마 ${josa(a, '과/와')} ${b} (${a} × ${b} = ${f.num})`);
           break;
         }
         case 'revive':

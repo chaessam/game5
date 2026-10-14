@@ -6,7 +6,7 @@ import type { UnitDef } from './types';
 export function songText(u: UnitDef): string {
   const n = u.n;
   const c = u.coef;
-  const s3 = (v: number) => `${v} / ${v * 2} / ${v * 3}`;
+  const s3 = (v: number) => `${v}\u00a0/\u00a0${v * 2}\u00a0/\u00a0${v * 3}`;
   const cc = (div?: number, word = '멈춤') => (div ? `, (숫자 ÷ ${div}) = ${Math.floor(n / div)}박 ${word}` : '');
   switch (u.skill) {
     case 'conductor': return `붙은 친구가 노래할 때 함께 노래(합창 ${C.conductorChorusCount}명 몫), 다른 친구 2명 이상과 노래하면 가장 아픈 친구에게 (다른 친구 수 × ${c}) 방패`;

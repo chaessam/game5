@@ -6,7 +6,6 @@ import { DEFAULT_CONFIG, UNITS } from '../engine/data';
 import { income } from '../game/game';
 import { isStoneItem, numberOf } from '../game/items';
 import type { PlayerState } from '../game/types';
-import { saveProgress } from '../net/api';
 
 export const TIPS: Record<string, { title: string; text: string }> = {
   ninja: { title: '닌자', text: '닌자는 적의 뒷줄부터 때려요. 약한 친구는 기사 뒤에 숨겨 봐요.' },
@@ -28,8 +27,11 @@ export const TIPS: Record<string, { title: string; text: string }> = {
 };
 
 let seen = new Set<string>();
+/** 서버에 아직 안 보낸 말풍선(판이 끝날 때 기록과 함께 한 번에 보냄) */
+let pending = new Set<string>();
 try {
   seen = new Set((localStorage.getItem('nc-tips') || '').split(',').filter(Boolean));
+  pending = new Set((localStorage.getItem('nc-tips-pending') || '').split(',').filter(Boolean));
 } catch {
   /* 기본 비어 있음 */
 }
@@ -42,6 +44,7 @@ export function mergeSeen(list: string[]) {
 function persist() {
   try {
     localStorage.setItem('nc-tips', [...seen].join(','));
+    localStorage.setItem('nc-tips-pending', [...pending].join(','));
   } catch {
     /* 무시 */
   }
@@ -49,8 +52,14 @@ function persist() {
 export function markSeen(id: string) {
   if (seen.has(id)) return;
   seen.add(id);
+  pending.add(id);
   persist();
-  void saveProgress({ tips: [id] });
+}
+export const pendingTips = () => [...pending];
+/** 서버에 보낸 뒤 */
+export function clearPending(sent: string[]) {
+  sent.forEach((t) => pending.delete(t));
+  persist();
 }
 
 const tipLine = (id: string) => `💡 처음 보는 ${TIPS[id].title}! ${TIPS[id].text}`;

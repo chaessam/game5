@@ -71,7 +71,7 @@ export function loginBoxHtml(): string {
       <input id="nc-pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="비밀번호 4자리" value="${esc(pin)}">
       <button class="btn gold" data-action="login" ${busy ? 'disabled' : ''}>들어가기</button>
     </div>
-    <div class="sub">${picked ? `${esc(placeOf(picked))} ${esc(picked.name)}` : '학교를 검색해서 골라요.'} · 처음이면 그 자리에서 계정이 만들어져요. 들어가지 않아도 게임은 할 수 있어요(기록은 저장 안 됨).</div>
+    <div class="sub">${picked ? `📍 ${esc(placeOf(picked))} ${esc(picked.name)}` : '학교 이름을 검색해서 골라요.'} 처음이면 계정이 새로 만들어져요.<br>들어가지 않아도 할 수 있어요. (기록은 저장 안 돼요)</div>
     ${message ? `<div class="lmsg">${esc(message)}</div>` : ''}
   </div>`;
 }
@@ -175,6 +175,6 @@ async function doLogin(create: boolean, rerender: () => void) {
   }
   pin = '';
   message = '';
-  await refreshMe();
+  record = r.record; // 들어갈 때 받은 기록(내 기록을 다시 읽지 않음)
   rerender();
 }

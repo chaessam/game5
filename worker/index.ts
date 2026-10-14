@@ -109,6 +109,16 @@ function validBoard(b: unknown): b is GhostUnit[] {
 }
 
 // ---------------- 저장소 ----------------
+interface MyRecord {
+  games: number;
+  firsts: number;
+  medals: number;
+  bestMedals: number;
+  bestChorus: { beat: number; nums: number[]; count: number } | null;
+  collection: { met?: number[]; three?: number[]; morphs?: string[] };
+  tutorial: boolean;
+  tips: string[];
+}
 type Account = { school: string; nick: string; pin_hash: string; salt: string; fails: number; locked_until: number; last: number };
 
 export class Store extends DurableObject<Env> {
@@ -235,7 +245,7 @@ export class Store extends DurableObject<Env> {
       if (await this.limited(ip, 'register', 300, DAY_MS)) return { ok: false, status: 429, error: '오늘 이 곳에서 만든 계정이 너무 많아요. 내일 다시 해 주세요.' };
       const salt = randomHex(16);
       this.sql.exec('INSERT INTO accounts (school, nick, pin_hash, salt, created, last) VALUES (?, ?, ?, ?, ?, ?)', school.code, nick, await hashPin(pin, salt), salt, now, now);
-      return { ok: true, token: await this.newSession(school.code, nick), school: school.code, nick, created: true, teacher: isAdmin(school.code, nick) };
+      return { ok: true, token: await this.newSession(school.code, nick), school: school.code, nick, created: true, teacher: isAdmin(school.code, nick), record: this.readRecord(school.code, nick) };
     }
     if (a.locked_until > now) {
       const min = Math.ceil((a.locked_until - now) / 60000);
@@ -253,7 +263,7 @@ export class Store extends DurableObject<Env> {
     if (a.fails || a.locked_until || now - a.last > SESSION_TOUCH_MS) {
       this.sql.exec('UPDATE accounts SET fails = 0, locked_until = 0, last = ? WHERE school = ? AND nick = ?', now, school.code, nick);
     }
-    return { ok: true, token: await this.newSession(school.code, nick), school: school.code, nick, teacher: isAdmin(school.code, nick) };
+    return { ok: true, token: await this.newSession(school.code, nick), school: school.code, nick, teacher: isAdmin(school.code, nick), record: this.readRecord(school.code, nick) };
   }
 
   async logout(token: string) {
@@ -261,91 +271,118 @@ export class Store extends DurableObject<Env> {
     return { ok: true };
   }
 
-  recordOf(school: string, nick: string) {
+  // ---- 내 기록: 한 사람 한 줄. 읽기 1줄 + 쓰기 1줄(UPSERT)로 끝내 무료 한도를 아낀다 ----
+  readRecord(school: string, nick: string): MyRecord {
     const r = this.sql.exec<Record<string, string | number>>('SELECT * FROM records WHERE school = ? AND nick = ?', school, nick).toArray()[0];
-    if (!r) return { games: 0, firsts: 0, medals: 0, bestMedals: 0, bestChorus: null, collection: {}, tutorial: false, tips: [] as string[] };
-    const parse = (s: unknown, d: unknown) => {
+    const empty: MyRecord = { games: 0, firsts: 0, medals: 0, bestMedals: 0, bestChorus: null, collection: {}, tutorial: false, tips: [] };
+    if (!r) return empty;
+    const parse = <T>(v: unknown, d: T): T => {
       try {
-        return s ? JSON.parse(String(s)) : d;
+        return v ? (JSON.parse(String(v)) as T) : d;
       } catch {
         return d;
       }
     };
     return {
-      games: r.games, firsts: r.firsts, medals: r.medals, bestMedals: r.best_medals,
+      games: Number(r.games), firsts: Number(r.firsts), medals: Number(r.medals), bestMedals: Number(r.best_medals),
       bestChorus: parse(r.best_chorus, null), collection: parse(r.collection, {}), tutorial: !!r.tutorial,
       tips: String(r.tips || '').split(',').filter(Boolean),
     };
   }
 
-  ensureRecord(school: string, nick: string) {
-    this.sql.exec('INSERT INTO records (school, nick, updated) VALUES (?, ?, ?) ON CONFLICT (school, nick) DO NOTHING', school, nick, Date.now());
+  writeRecord(school: string, nick: string, r: MyRecord) {
+    this.sql.exec(
+      `INSERT INTO records (school, nick, games, firsts, medals, best_medals, best_chorus, collection, tutorial, tips, updated)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (school, nick) DO UPDATE SET games = excluded.games, firsts = excluded.firsts, medals = excluded.medals,
+         best_medals = excluded.best_medals, best_chorus = excluded.best_chorus, collection = excluded.collection,
+         tutorial = excluded.tutorial, tips = excluded.tips, updated = excluded.updated`,
+      school, nick, r.games, r.firsts, r.medals, r.bestMedals, r.bestChorus ? JSON.stringify(r.bestChorus) : '',
+      JSON.stringify(r.collection), r.tutorial ? 1 : 0, r.tips.slice(0, 60).join(','), Date.now(),
+    );
+  }
+
+  /** 본 말풍선·튜토리얼 끝을 기록에 합친다(바뀐 게 있을 때만 true) */
+  mergeProgress(r: MyRecord, body: Record<string, unknown>): boolean {
+    const before = r.tips.length;
+    const tips = new Set(r.tips);
+    for (const t of Array.isArray(body.tips) ? body.tips.slice(0, 30) : []) if (/^[a-z0-9_]{1,24}$/.test(String(t))) tips.add(String(t));
+    r.tips = [...tips];
+    const tut = r.tutorial || !!body.tutorialDone;
+    const changed = tut !== r.tutorial || r.tips.length !== before;
+    r.tutorial = tut;
+    return changed;
   }
 
   async me(token: string) {
     const who = await this.accountOf(token);
     if (!who) return { ok: false, code: 'no_session' };
-    return { ok: true, school: who.school, nick: who.nick, teacher: isAdmin(who.school, who.nick), record: this.recordOf(who.school, who.nick) };
+    return { ok: true, school: who.school, nick: who.nick, teacher: isAdmin(who.school, who.nick), record: this.readRecord(who.school, who.nick) };
   }
 
-  /** 튜토리얼 끝, 본 말풍선(쉼표로 잇기) */
+  /** 튜토리얼 끝(+ 그동안 본 말풍선). 바뀐 게 없으면 쓰지 않음 */
   async progress(token: string, body: Record<string, unknown>) {
     const who = await this.accountOf(token);
     if (!who) return { ok: false, code: 'no_session' };
-    this.ensureRecord(who.school, who.nick);
-    const cur = this.recordOf(who.school, who.nick);
-    const tips = new Set(cur.tips);
-    for (const t of Array.isArray(body.tips) ? body.tips : []) if (/^[a-z0-9_]{1,24}$/.test(String(t))) tips.add(String(t));
-    const tutorial = cur.tutorial || !!body.tutorialDone;
-    this.sql.exec('UPDATE records SET tutorial = ?, tips = ?, updated = ? WHERE school = ? AND nick = ?', tutorial ? 1 : 0, [...tips].slice(0, 60).join(','), Date.now(), who.school, who.nick);
-    return { ok: true };
+    const r = this.readRecord(who.school, who.nick);
+    if (this.mergeProgress(r, body)) this.writeRecord(who.school, who.nick, r);
+    return { ok: true, record: r };
   }
 
-  /** 한 판 기록: { rank, players, medals, bestChorus: {beat, nums, count}, collection: { met, three, morphs } } */
+  /**
+   * 한 판 기록(판이 끝날 때 한 번): { rank, medals, bestChorus, collection: { met, three, morphs }, tips?, ghost?: { rounds, level } }
+   * 기록·말풍선·친구 유령을 요청 하나로 받는다.
+   */
   async record(token: string, body: Record<string, unknown>) {
     const who = await this.accountOf(token);
     if (!who) return { ok: false, code: 'no_session' };
     const rank = Number(body.rank);
     const medals = Math.max(0, Math.min(200, Number(body.medals) || 0));
     if (!(rank >= 1 && rank <= 4)) return { ok: false, error: '기록이 이상해요.' };
-    this.ensureRecord(who.school, who.nick);
-    const cur = this.recordOf(who.school, who.nick);
-    // 도감: 만난 친구, 3성, 변신해 본 숫자(캐릭터→숫자)
-    const col = cur.collection as { met?: number[]; three?: number[]; morphs?: string[] };
+    const r = this.readRecord(who.school, who.nick);
+    // 도감: 만난 친구, 3성, 변신해 본 숫자(캐릭터>숫자)
+    const col = r.collection;
     const inc = (body.collection ?? {}) as { met?: unknown[]; three?: unknown[]; morphs?: unknown[] };
-    const nums = (a: unknown[] | undefined) => (a ?? []).map(Number).filter((n) => UNITS[n]);
-    const merged = {
+    const nums = (a: unknown[] | undefined) => (Array.isArray(a) ? a : []).slice(0, 40).map(Number).filter((n) => UNITS[n]);
+    r.collection = {
       met: [...new Set([...(col.met ?? []), ...nums(inc.met)])].sort((a, b) => a - b),
       three: [...new Set([...(col.three ?? []), ...nums(inc.three)])].sort((a, b) => a - b),
-      morphs: [...new Set([...(col.morphs ?? []), ...(inc.morphs ?? []).map(String).filter((m) => /^\d{1,2}>\d{1,2}$/.test(m))])].slice(0, 300),
+      morphs: [...new Set([...(col.morphs ?? []), ...(Array.isArray(inc.morphs) ? inc.morphs : []).slice(0, 40).map(String).filter((m) => /^\d{1,2}>\d{1,2}$/.test(m))])].slice(0, 300),
     };
-    let best = cur.bestChorus as { count: number } | null;
     const bc = body.bestChorus as { beat?: number; nums?: number[]; count?: number } | undefined;
-    if (bc && Number(bc.count) >= 2 && (!best || Number(bc.count) > best.count)) {
-      best = { beat: Number(bc.beat), nums: (bc.nums ?? []).map(Number).slice(0, 8), count: Number(bc.count) } as { count: number };
+    if (bc && Number(bc.count) >= 2 && Number(bc.count) <= 8 && (!r.bestChorus || Number(bc.count) > r.bestChorus.count)) {
+      r.bestChorus = { beat: Number(bc.beat), nums: (Array.isArray(bc.nums) ? bc.nums : []).map(Number).slice(0, 8), count: Number(bc.count) };
     }
-    this.sql.exec(
-      `UPDATE records SET games = games + 1, firsts = firsts + ?, medals = medals + ?, best_medals = MAX(best_medals, ?),
-        best_chorus = ?, collection = ?, updated = ? WHERE school = ? AND nick = ?`,
-      rank === 1 ? 1 : 0, medals, medals, best ? JSON.stringify(best) : '', JSON.stringify(merged), Date.now(), who.school, who.nick,
-    );
-    return { ok: true, record: this.recordOf(who.school, who.nick) };
+    r.games++;
+    if (rank === 1) r.firsts++;
+    r.medals += medals;
+    r.bestMedals = Math.max(r.bestMedals, medals);
+    this.mergeProgress(r, body);
+    this.writeRecord(who.school, who.nick, r);
+    const ghost = body.ghost as { rounds?: unknown; level?: unknown } | undefined;
+    if (ghost) this.addGhost(who.school, who.nick, ghost.rounds, ghost.level);
+    return { ok: true, record: r };
   }
 
-  /** 친구 유령: 한 판의 라운드별 보드(최대 12라운드) */
+  /** 친구 유령 한 판(라운드별 보드). 오래된 것 정리는 10판에 한 번만(읽기 아끼기) */
+  addGhost(school: string, nick: string, rounds: unknown, level: unknown): boolean {
+    if (!Array.isArray(rounds) || !rounds.length || rounds.length > 12 || !rounds.every(validBoard)) return false;
+    const data = JSON.stringify({ rounds, level: Number(level) || 0 });
+    if (data.length > MAX_GHOST_BYTES) return false;
+    const { id } = this.sql.exec<{ id: number }>('INSERT INTO ghosts (school, nick, created, data) VALUES (?, ?, ?, ?) RETURNING id', school, nick, Date.now(), data).one();
+    if (id % 10 === 0) {
+      this.sql.exec(
+        `DELETE FROM ghosts WHERE school = ? AND id NOT IN (SELECT id FROM ghosts WHERE school = ? ORDER BY created DESC LIMIT ${GHOSTS_PER_SCHOOL})`,
+        school, school,
+      );
+    }
+    return true;
+  }
+
   async saveGhost(token: string, body: Record<string, unknown>) {
     const who = await this.accountOf(token);
     if (!who) return { ok: false, code: 'no_session' };
-    const rounds = body.rounds;
-    if (!Array.isArray(rounds) || !rounds.length || rounds.length > 12 || !rounds.every(validBoard)) return { ok: false, error: '보드 기록이 이상해요.' };
-    const data = JSON.stringify({ rounds, level: Number(body.level) || 0 });
-    if (data.length > MAX_GHOST_BYTES) return { ok: false, error: '기록이 너무 커요.' };
-    this.sql.exec('INSERT INTO ghosts (school, nick, created, data) VALUES (?, ?, ?, ?)', who.school, who.nick, Date.now(), data);
-    this.sql.exec(
-      `DELETE FROM ghosts WHERE school = ? AND id NOT IN (SELECT id FROM ghosts WHERE school = ? ORDER BY created DESC LIMIT ${GHOSTS_PER_SCHOOL})`,
-      who.school, who.school,
-    );
-    return { ok: true };
+    return this.addGhost(who.school, who.nick, body.rounds, body.level) ? { ok: true } : { ok: false, error: '보드 기록이 이상해요.' };
   }
 
   /** 같은 학교 친구 유령 n명(나 빼고, 사람마다 최근 한 판) */

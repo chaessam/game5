@@ -116,7 +116,7 @@ export const TUT_STEPS: TutStep[] = [
   // ---- 1라운드: 사기 · 자동 가문 · 직업 · 놓기 · 박자 · 합창
   { id: 'hello', round: 1, text: '안녕! 나는 1, 하나 지휘자야. 1은 모든 수의 약수라서 어떤 노래에도 낄 수 있어.', expect: { kind: 'ok' } },
   { id: 'song', round: 1, text: "이 게임은 필살기를 '노래'라고 불러. 3번 친구는 3단 박(3·6·9…)마다 노래해!", expect: { kind: 'ok' } },
-  { id: 'buy4', round: 1, text: '4 거북을 눌러 사 봐! 4는 2의 배수라서 저절로 짝꿍 가문이야.', expect: { kind: 'own', char: 4, copies: 1 }, highlight: shopIdx(4) },
+  { id: 'buy4', round: 1, text: '4 거북이를 눌러 사 봐! 4는 2의 배수라서 저절로 짝꿍 가문이야.', expect: { kind: 'own', char: 4, copies: 1 }, highlight: shopIdx(4) },
   { id: 'place4', round: 1, text: '대기석의 4를 누르고 판의 앞줄 칸을 눌러 봐. 기사는 앞줄에서 대신 맞아 줘!', expect: { kind: 'front', char: 4 }, highlight: '.board .cell.front' },
   { id: 'buy2', round: 1, text: '2 토끼를 사서 판(뒷줄)에 올려 봐. 짝꿍 2명, 켜졌다! 설명은 왼쪽 판에 늘 있으니 외우지 않아도 돼.', expect: { kind: 'board', chars: [4, 2] }, highlight: shopIdx(2), mentions: ['even'] },
   { id: 'buy6', round: 1, text: '6 꿀벌도 사서 올려 봐. 6은 짝꿍·세모 둘 다야. 오른쪽 직업 판! 2와 6은 힐러라 힐러가 켜졌어.', expect: { kind: 'board', chars: [4, 2, 6] }, highlight: shopIdx(6), mentions: ['healer'] },

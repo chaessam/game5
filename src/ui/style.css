@@ -9,8 +9,12 @@ body {
   background: radial-gradient(900px 420px at 50% 110%, rgba(140, 70, 220, .5), transparent 70%), linear-gradient(var(--bg1), var(--bg2));
   color: var(--ink); font: 16px/1.4 'Gothic A1', system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
   -webkit-tap-highlight-color: transparent;
+  /* 한글은 낱말 중간에서 끊지 않기(너무 긴 것만 어디서든 끊음), 짧은 끝줄 피하기 */
+  word-break: keep-all; overflow-wrap: anywhere; text-wrap: pretty;
 }
+h1, h2, h3, .ptitle, .bv-say .txt, .tut .txt, .bubble, .q { text-wrap: balance; }
 button { font: inherit; color: inherit; cursor: pointer; }
+.nw { white-space: nowrap; }
 .jua { font-family: 'Jua', 'Gothic A1', sans-serif; }
 
 .app { display: grid; gap: 8px; padding: 8px; max-width: 1400px; margin: 0 auto; height: 100vh; height: 100dvh;
@@ -87,7 +91,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .card .beats { font-size: 12px; color: #ffe08a; }
 .card .band { font-size: 11px; font-weight: 800; border-radius: 8px; padding: 2px 6px; background: rgba(62, 224, 127, .2); color: #b8ffd3; }
 .card .band.merge { background: rgba(255, 197, 49, .25); color: #ffe08a; }
-.card .info { position: absolute; left: 6px; top: 6px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--line); background: rgba(0,0,0,.35); font-size: 13px; }
+.card .info { position: absolute; left: 6px; top: 6px; width: 26px; height: 26px; display: grid; place-items: center; font-weight: 800; color: #e6e2ff; border-radius: 50%; border: 1px solid var(--line); background: rgba(0,0,0,.35); font-size: 13px; }
 .chip { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 800; padding: 1px 6px 1px 3px; border-radius: 999px; background: rgba(0,0,0,.35); }
 .chip.role { padding-left: 6px; background: rgba(255,255,255,.12); }
 .side { display: flex; flex-direction: column; gap: 8px; }
@@ -177,6 +181,10 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .nbnums { display: flex; flex-wrap: wrap; gap: 4px; }
 .nbn { min-width: 34px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06); font-family: 'Jua', sans-serif; padding: 3px 0; }
 .nbn.on { background: var(--gold); color: #1d1440; }
+.nbinfo { display: flex; gap: 14px; align-items: flex-start; }
+.nbinfo .nbbig { font-size: 40px; line-height: 1; min-width: 52px; text-align: center; color: var(--gold); font-weight: 400; }
+.nbinfo dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font-size: 14px; }
+.nbinfo dt { color: var(--muted); } .nbinfo dd { margin: 0; }
 .nbtips { display: grid; gap: 4px; font-size: 14px; }
 .nbtips .locked { color: var(--muted); }
 
@@ -194,6 +202,8 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .slist li small { color: var(--muted); }
 .slist li.dup span { color: var(--gold); }
 .slist li.info { cursor: default; color: var(--muted); }
+.links { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 4px 0 0; }
+.links a { color: var(--gold); white-space: nowrap; }
 .lmsg { margin-top: 6px; color: #ffb3c1; font-weight: 700; font-size: 13px; }
 
 /* 시작 화면 난이도 */

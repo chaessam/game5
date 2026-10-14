@@ -23,12 +23,12 @@ import { FAM_COLOR, ROLE_COLOR } from './art/parts';
 import { BattleView } from './battle-view';
 import { unlockAudio } from './sound';
 import { battleInsight, momentText, type Moment } from './insight';
-import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe } from './login';
+import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe, setLocalRecord } from './login';
 import { QUIZ, TUT_ROUNDS, TUT_STEPS, createTutorial, fixTutorialRewards, prepareTutorialRound, stepDone, tutorialAllows, type TutTalk } from '../game/tutorial';
 import { readAloud } from './battle-view';
-import { saveProgress } from '../net/api';
-import { TIPS, battleTips, markSeen, mergeSeen, prepTip, prepTipLine, seenTips } from './tips';
-import { fetchGhosts, getAuth, saveGhost, saveRecord } from '../net/api';
+import { TIPS, battleTips, clearPending, markSeen, mergeSeen, pendingTips, prepTip, prepTipLine, seenTips } from './tips';
+import { fetchGhosts, getAuth, saveProgress, saveRecord } from '../net/api';
+import { josa, josaOnly } from '../shared/josa';
 
 // ---------------- 상태 ----------------
 let g: GameState | null = null;
@@ -88,8 +88,7 @@ const me = () => g!.players[0];
 const COST_COLOR = ['', 'var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)'];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const stars = (n: number) => '★'.repeat(n);
-/** 숫자 뒤 '와/과' (2·4·5·9로 끝나면 '와') */
-const gwa = (n: number) => ([2, 4, 5, 9].includes(n % 10) ? '와' : '과');
+const gwa = (n: number) => josaOnly(n, '과/와');
 const beatsOf = (n: number) => [1, 2, 3].map((k) => n * k).join('·') + '…';
 
 function toast(msg: string) {
@@ -301,7 +300,7 @@ function detailHtml(p: PlayerState) {
       <dt>노래</dt><dd>${esc(songText({ ...u, n: num }))}<br><small class="sub">값은 1성 / 2성 / 3성</small></dd>
       <dt>체력·공격</dt><dd>${u.hp * star} · ${u.atk * star} (${star}성)</dd>
       <dt>약수</dt><dd><div class="divs">${d.map((x) => `<span>${x}</span>`).join('')}</div><small class="sub">${d.length}개${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}</small></dd>
-      ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}💥 ${pair[0]} + ${pair[1]} (${pair[0]} × ${pair[1]} = ${num})</dd>` : ''}
+      ${pair ? `<dt>쓰러지면</dt><dd>${fams.includes('rich') ? '부자 가문이 켜져 있으면 ' : '분신 주머니가 있으면 '}<span class="nw">💥 ${pair[0]} + ${pair[1]}</span> <span class="nw">(${pair[0]} × ${pair[1]} = ${num})</span></dd>` : ''}
       <dt>남은 카드</dt><dd>${g!.pool[char]}장 남음</dd>
       ${owned && handshakes(p).get(owned.unit.uid) ? `<dt>손잡기</dt><dd>${handshakes(p).get(owned.unit.uid)!.with.map((w) => `🤝 ${num}${gwa(num)} ${w.num}: 최대공약수 ${w.g}`).join('<br>')}<br>→ 방패 <b>${handshakes(p).get(owned.unit.uid)!.shield}</b> <small class="sub">(최대공약수 × ${DEFAULT_CONFIG.handshakePerGcd})</small></dd>` : ''}
       <dt>아이템 칸</dt><dd class="islots">${slotsHtml}</dd>
@@ -348,7 +347,7 @@ function equipHtml(p: PlayerState, index: number, uid: number): string {
   const gems = pv.gained.map((x) => `<span class="chip" style="color:${FAM_COLOR[x]}">+ ${famIcon(x, 13)}${FAMILIES[x].name}</span>`)
     .concat(pv.lost.map((x) => `<span class="chip lost" style="color:${FAM_COLOR[x]}">− ${famIcon(x, 13)}${FAMILIES[x].name}</span>`)).join(' ');
   const song = pv.song
-    ? `<div class="pv-song">30박 동안: 노래 ${pv.song.before[0]}번 × ${pv.song.before[1]} = <b>${pv.song.before[0] * pv.song.before[1]}</b> → ${pv.song.after[0]}번 × ${pv.song.after[1]} = <b>${pv.song.after[0] * pv.song.after[1]}</b><br><small>(30 ÷ 숫자 = 노래 횟수, 숫자 × ${UNITS[u.char].coef}${u.star > 1 ? ` × ${u.star}성` : ''} = 한 번 크기)</small></div>`
+    ? `<div class="pv-song">30박 동안 노래 힘<br><span class="nw">${pv.song.before[0]}번 × ${pv.song.before[1]} = <b>${pv.song.before[0] * pv.song.before[1]}</b></span> → <span class="nw">${pv.song.after[0]}번 × ${pv.song.after[1]} = <b>${pv.song.after[0] * pv.song.after[1]}</b></span><br><small>(30 ÷ 숫자 = 노래 횟수, 숫자 × ${UNITS[u.char].coef}${u.star > 1 ? ` × ${u.star}성` : ''} = 한 번 크기)</small></div>`
     : '';
   return `<aside class="drawer">${head}
     <div class="pv-arts">${charArt(u.char, 74, { star: u.star, num: pv.from })}<span class="pv-big">${pv.from} → ${pv.to}</span>${charArt(u.char, 74, { star: u.star, num: pv.to })}</div>
@@ -453,7 +452,7 @@ function modalHtml(): string {
         ? '<p style="margin:6px 0"><button class="btn small ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>'
         : '<button class="choice tutbtn" data-action="tutorial"><b class="jua" style="font-size:22px">📖 처음이라면: 튜토리얼 한 판</b><br>하나쌤과 5라운드 (약 7분) — 규칙을 하나씩 해 보며 배워요</button>'}
       <div class="diffs">컴퓨터 난이도
-        ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 싸워 보고 골라요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
+        ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 겨뤄 봐요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
           .map(([d, nm, sub]) => `<button class="diff ${startDiff === d ? 'on' : ''}" data-action="diff" data-d="${d}"><b class="jua">${nm}</b><small>${sub}</small></button>`).join('')}
       </div>
       <div class="choices">
@@ -462,7 +461,8 @@ function modalHtml(): string {
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 (약 8분)</button>
         ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
-      <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요. <a href="./dogam.html" style="color:var(--gold)">캐릭터 도감 보기</a> · <a href="#" data-action="notebook" style="color:var(--gold)">📘 수학 수첩</a></p>
+      <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요.</p>
+      <p class="links"><a href="./dogam.html">🐾 캐릭터 도감</a> <a href="#" data-action="notebook">📘 수학 수첩</a></p>
     </div></div>`;
   }
   if (battle) return '';
@@ -477,8 +477,8 @@ function modalHtml(): string {
   const reward = g.pendingRewards.find((r) => r.playerId === p.id);
   if (g.phase === 'reward' && reward) {
     return `<div class="modal"><div class="box"><h2>보상 고르기</h2><p>몬스터 라운드 보상이에요. 하나를 골라요. ${reward.options.length > 3 ? '<b>(상자 하나 더!)</b>' : ''}</p>
-      <div class="choices">${reward.options.map((opt, i) => `<button class="choice" data-action="reward" data-i="${i}">🎁<br>${opt.map((it) => `<div>${ITEM_NAME[it]}</div>`).join('')}${reward.cardCost?.[i] ? `<div>${reward.cardCost[i]}골드 친구 1명</div>` : ''}</button>`).join('')}</div>
-      <p class="sub" style="color:var(--muted)">돌은 가방에 들어가요. 친구에게 끼워 숫자를 바꾸는 건 곧 열려요.</p></div></div>`;
+      <div class="choices">${reward.options.map((opt, i) => `<button class="choice" data-action="reward" data-i="${i}">🎁<br>${opt.map((it) => `<div>${ITEM_NAME[it]}${isStoneItem(it) ? '' : `<small class="ihelp">${ITEM_HELP[it]}</small>`}</div>`).join('')}${reward.cardCost?.[i] ? `<div>${reward.cardCost[i]}골드 친구 1명</div>` : ''}</button>`).join('')}</div>
+      <p class="sub" style="color:var(--muted)">받은 돌·보물은 가방에 들어가요. 가방에서 누르고 → 친구를 누르면 끼워요.</p></div></div>`;
   }
   if (g.phase === 'over') {
     const r = ranking(g);
@@ -487,7 +487,7 @@ function modalHtml(): string {
     return `<div class="modal"><div class="box"><h2>게임 끝!</h2>
       <div class="hl">👑 1등: <b>${esc(r[0].name)}</b></div>
       <div class="hl">내 메달 <b class="jua" style="font-size:22px">${mine.medals}개</b> · 이긴 판 ${mine.wins}번 · 한 라운드 최고 메달 ${best}개</div>
-      ${bestChorus ? `<div class="hl tip">🔎 오늘의 수학 발견: ${bestChorus.round}라운드 <b>${bestChorus.beat}박</b>에 ${[...bestChorus.nums].sort((a, b) => a - b).join('·')}가 함께 노래했어요 — 모두 ${bestChorus.beat}의 약수! <span class="sub">(${bestChorus.beat}의 약수: ${divisors(bestChorus.beat).join(', ')})</span></div>` : ''}
+      ${bestChorus ? `<div class="hl tip">🔎 오늘의 수학 발견: ${bestChorus.round}라운드 <b>${bestChorus.beat}박</b>에 ${josa([...bestChorus.nums].sort((a, b) => a - b).join('·'), '이/가')} 함께 노래했어요 — 모두 ${bestChorus.beat}의 약수! <span class="sub">(${bestChorus.beat}의 약수: ${divisors(bestChorus.beat).join(', ')})</span></div>` : ''}
       <button class="btn gold" data-action="restart">새 게임</button></div></div>`;
   }
   return '';
@@ -531,7 +531,7 @@ function render() {
   const plan = currentPlan(g);
   const inc = income(p);
   const syn = synPanels(p);
-  const odds = SHOP_ODDS[p.level].map((x, i) => `${i + 1}골드 ${x}%`).join(' · ');
+  const odds = SHOP_ODDS[p.level].map((x, i) => (x ? `<span class="nw">${i + 1}골드 ${x}%</span>` : '')).filter(Boolean).join(' · ');
   const need = ECON.xpToNext[p.level];
   const center = battle
     ? `<div class="panel bv-host" id="bvhost"></div>`
@@ -566,7 +566,7 @@ function render() {
         <div class="odds">레벨 ${p.level} 상점: ${odds}</div>
         <div class="bag">가방 (${p.bag.length}/${ECON.bagSize}) <span class="sub" style="color:var(--muted)">${p.bag.length ? '돌을 누르고 → 친구를 눌러요' : '몬스터를 이기면 돌을 받아요'}</span>
           <div class="bagitems">${p.bag.map((it, i) => `<button class="item ${isStoneItem(it) ? 'stone' : 'treasure'} ${(selected?.kind === 'item' || selected?.kind === 'equip') && selected.index === i ? 'sel' : ''}" data-action="bagitem" data-i="${i}" draggable="true" title="${esc(ITEM_NAME[it])}: ${esc(ITEM_HELP[it])}">${ITEM_LABEL[it]}</button>`).join('')}</div></div>
-        <div class="sellzone" data-action="sellzone">여기로 끌어 놓으면 팔기 (산 값 그대로)</div>
+        <div class="sellzone" data-action="sellzone">여기로 끌어 놓으면 팔기<br><small>산 값 그대로 돌려받아요</small></div>
       </div>
     </footer>
   </div>
@@ -747,7 +747,7 @@ app.addEventListener('click', (ev) => {
       const r = buy(g, p, i);
       if (check(r)) {
         if (r.ok && r.merged) toast(`${UNITS[r.merged.char].name} ${r.merged.star}성 합체!`);
-        else if (char !== null) toast(`${char} ${UNITS[char].name}을(를) 데려왔어요`);
+        else if (char !== null) toast(`${char} ${josa(UNITS[char].name, '을/를')} 데려왔어요`);
         if (selected?.kind === 'shop') selected = null;
       }
       break;
@@ -802,7 +802,7 @@ app.addEventListener('click', (ev) => {
     case 'sell':
       if (selected?.kind === 'unit') {
         const f = findUnit(p, selected.uid);
-        if (f && check(sell(g, p, selected.uid))) toast(`${UNITS[f.unit.char].name}을(를) 팔았어요 (+${sellValue(f.unit)}골드)`);
+        if (f && check(sell(g, p, selected.uid))) toast(`${josa(UNITS[f.unit.char].name, '을/를')} 팔았어요 (+${sellValue(f.unit)}골드)`);
         selected = null;
       }
       break;
@@ -865,11 +865,11 @@ function notebookHtml(): string {
   const who = UNIT_IDS.filter((c) => c !== n && n % c === 0);
   const seen = seenTips();
   const pages = [
-    ['배수', '3의 배수 = 3·6·9·12… → <b>3번 친구는 3의 배수 박마다 노래</b>해요.'],
-    ['약수', '12의 약수 = 1·2·3·4·6·12 → <b>12박에는 약수 숫자 친구들이 함께 노래</b>할 수 있어요. 약수가 딱 2개면 다이아, 6개 이상이면 부자.'],
-    ['공배수 · 최소공배수', '4의 배수와 6의 배수에 모두 있는 수 = 12·24·36 → <b>4와 6이 함께 노래하는 박</b>. 가장 작은 12가 최소공배수예요.'],
-    ['공약수 · 최대공약수', `4와 6을 둘 다 나누어떨어지게 하는 수 = 1·2 → 가장 큰 2가 최대공약수 → <b>붙어 있으면 손잡기 방패 ${2 * DEFAULT_CONFIG.handshakePerGcd}</b>.`],
-    ['숫자 돌', '5 × 2 = 10: 모습·직업·성은 그대로, <b>등번호만 바뀌어요</b>. ÷ 돌은 나누어떨어질 때만 끼울 수 있어요.'],
+    ['배수', '3의 배수 = 3·6·9·12…<br>→ <b>3번 친구는 3의 배수 박마다 노래</b>해요.'],
+    ['약수', '12의 약수 = 1·2·3·4·6·12<br>→ <b>12박에는 약수 숫자 친구들이 함께 노래</b>할 수 있어요.<br>약수가 딱 2개면 다이아, 6개 이상이면 부자.'],
+    ['공배수 · 최소공배수', '4의 배수와 6의 배수에 모두 있는 수 = 12·24·36<br>→ <b>4와 6이 함께 노래하는 박</b>.<br>가장 작은 12가 최소공배수예요.'],
+    ['공약수 · 최대공약수', `4와 6을 둘 다 나누어떨어지게 하는 수 = 1·2<br>가장 큰 2가 최대공약수<br>→ <b>붙어 있으면 손잡기 방패 ${2 * DEFAULT_CONFIG.handshakePerGcd}</b>.`],
+    ['숫자 돌', '5에 ×2 돌 → 10<br>모습·직업·성은 그대로, <b>숫자만 바뀌어요</b>.<br>÷ 돌은 나누어떨어질 때만 끼울 수 있어요.'],
   ];
   return `<div class="modal"><div class="box notebook">
     <button class="btn small ghost close" data-action="closenb" style="float:right">닫기</button>
@@ -877,9 +877,11 @@ function notebookHtml(): string {
     <div class="nbgrid">${pages.map(([t, b]) => `<div class="nbcard"><b class="jua">${t}</b><div>${b}</div></div>`).join('')}</div>
     <h3 class="jua">숫자 살펴보기</h3>
     <div class="nbnums">${Array.from({ length: 40 }, (_, i) => i + 1).map((k) => `<button class="nbn ${k === n ? 'on' : ''}" data-action="nbnum" data-n="${k}">${k}</button>`).join('')}</div>
-    <div class="hl"><b class="jua" style="font-size:20px">${n}</b> · 약수 ${d.join('·')} (${d.length}개)${d.length === 2 ? ' → 다이아' : d.length >= 6 ? ' → 부자' : ''}
-      · 가문 ${fams.length ? fams.map((f) => `${famIcon(f, 14)}${FAMILIES[f].name}`).join(' ') : '없음'}
-      <br>노래하는 박(배수): ${mult.join('·')}${mult.length ? '박' : ''}${who.length ? `<br>${n}박에 함께 노래하는 친구(약수): ${who.join('·')}` : ''}</div>
+    <div class="hl nbinfo"><b class="jua nbbig">${n}</b><dl>
+      <dt>약수</dt><dd>${d.join('·')} (${d.length}개)</dd>
+      <dt>가문</dt><dd>${fams.length ? fams.map((f) => `${famIcon(f, 14)}${FAMILIES[f].name}`).join(' ') : '없음'}</dd>
+      <dt>노래하는 박</dt><dd>${mult.join('·')}${mult.length ? '박' : ''} <small class="sub">(${n}의 배수)</small></dd>
+      ${who.length ? `<dt>함께 노래</dt><dd>${n}박에 ${who.join('·')} <small class="sub">(${n}의 약수)</small></dd>` : ''}</dl></div>
     <h3 class="jua">처음 보는 순간 말풍선 (${seen.length}/${Object.keys(TIPS).length})</h3>
     <div class="nbtips">${Object.entries(TIPS).map(([id, t]) => (seen.includes(id) ? `<div><b>${esc(t.title)}</b> — ${esc(t.text)}</div>` : '<div class="locked">??? 아직 못 본 말풍선</div>')).join('')}</div>
     <p style="margin-top:10px"><button class="btn ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>
@@ -1006,7 +1008,13 @@ function tutorialAction(a: string, el: HTMLElement) {
     } catch {
       /* 무시 */
     }
-    void saveProgress({ tutorialDone: true });
+    const tips = pendingTips();
+    void saveProgress({ tutorialDone: true, tips }).then((r) => {
+      if (r.ok) {
+        setLocalRecord(r.record);
+        clearPending(tips);
+      }
+    });
     const next = el.dataset.next;
     tut = null;
     g = null;
@@ -1045,12 +1053,20 @@ function track() {
   if (g.phase === 'over' && !recordSaved && getAuth()) {
     recordSaved = true;
     const rank = ranking(g).findIndex((q) => q.id === 0) + 1;
+    // 요청 한 번에 기록 + 본 말풍선 + 친구 유령(유령과 겨룬 판은 유령으로 남기지 않음)
+    const tips = pendingTips();
     void saveRecord({
       rank, players: g.players.length, medals: me().medals,
       bestChorus: bestChorus ? { beat: bestChorus.beat, nums: bestChorus.nums, count: bestChorus.count } : null,
       collection: { met: [...met], three: [...three], morphs: [...morphs] },
-    }).then(() => refreshMe());
-    if (myBoards.length && !g.players.some((q) => q.ghost)) void saveGhost(myBoards, me().level);
+      tips,
+      ghost: myBoards.length && !g.players.some((q) => q.ghost) ? { rounds: myBoards, level: me().level } : null,
+    }).then((r) => {
+      if (r.ok) {
+        setLocalRecord(r.record);
+        clearPending(tips);
+      }
+    });
   }
 }
 
@@ -1102,7 +1118,7 @@ app.addEventListener('drop', (ev) => {
   if (!el) return;
   if (el.dataset.action === 'sellzone') {
     const f = findUnit(p, uid);
-    if (f && check(sell(g, p, uid))) toast(`${UNITS[f.unit.char].name}을(를) 팔았어요 (+${sellValue(f.unit)}골드)`);
+    if (f && check(sell(g, p, uid))) toast(`${josa(UNITS[f.unit.char].name, '을/를')} 팔았어요 (+${sellValue(f.unit)}골드)`);
   } else if (el.dataset.action === 'unit') {
     const target = findUnit(p, Number(el.dataset.uid));
     if (target) check(move(p, uid, target.slot));

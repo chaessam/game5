@@ -60,7 +60,7 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 }
 
 export async function login(schoolCode: string, schoolName: string, nick: string, pin: string, create = false) {
-  const r = await call<{ token: string; school: string; nick: string; created?: boolean; teacher?: boolean }>('POST', 'login', { schoolCode, nick, pin, create });
+  const r = await call<{ token: string; school: string; nick: string; created?: boolean; teacher?: boolean; record: MyRecord }>('POST', 'login', { schoolCode, nick, pin, create });
   if (r.ok) setAuth({ token: r.token, school: r.school, schoolName, nick: r.nick, teacher: r.teacher });
   return r;
 }
@@ -71,13 +71,17 @@ export async function logout() {
 }
 
 export const me = () => call<{ school: string; nick: string; teacher: boolean; record: MyRecord }>('GET', 'me');
-export const saveProgress = (p: { tutorialDone?: boolean; tips?: string[] }) => (auth ? call('POST', 'progress', p) : Promise.resolve({ ok: false } as const));
+// 서버 요청은 무료 한도를 아끼려고 꼭 필요할 때만: 페이지를 열 때 내 기록 1번, 들어갈 때 1번,
+// 판이 끝날 때 1번(기록 + 본 말풍선 + 친구 유령을 한꺼번에), 튜토리얼을 마칠 때 1번.
+export const saveProgress = (p: { tutorialDone?: boolean; tips?: string[] }) =>
+  auth ? call<{ record: MyRecord }>('POST', 'progress', p) : Promise.resolve({ ok: false } as const);
 export const saveRecord = (r: {
   rank: number;
   players: number;
   medals: number;
   bestChorus: { beat: number; nums: number[]; count: number } | null;
   collection: { met: number[]; three: number[]; morphs: string[] };
+  tips: string[];
+  ghost: { rounds: BoardUnit[][]; level: number } | null;
 }) => (auth ? call<{ record: MyRecord }>('POST', 'record', r) : Promise.resolve({ ok: false } as const));
-export const saveGhost = (rounds: BoardUnit[][], level: number) => (auth ? call('POST', 'ghost', { rounds, level }) : Promise.resolve({ ok: false } as const));
 export const fetchGhosts = (n: number) => call<{ ghosts: { nick: string; rounds: BoardUnit[][] }[] }>('GET', `ghosts?n=${n}`);
