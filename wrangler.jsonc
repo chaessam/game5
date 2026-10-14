@@ -11,11 +11,18 @@
     "directory": "./dist",
     "binding": "ASSETS"
   },
-  // 로그인·기록·도감·친구 유령을 저장하는 곳 (무료 플랜은 SQLite 방식만 가능)
+  // STORE: 로그인·기록·도감·친구 유령·랭크 점수·방 목록 / ROOM: 온라인 대결 방(방마다 하나, 끝나면 지움)
+  // 무료 플랜은 SQLite 방식만 가능
   "durable_objects": {
-    "bindings": [{ "name": "STORE", "class_name": "Store" }]
+    "bindings": [
+      { "name": "STORE", "class_name": "Store" },
+      { "name": "ROOM", "class_name": "Room" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Store"] },
+    { "tag": "v2", "new_sqlite_classes": ["Room"] }
+  ],
   // 로그: 무료 플랜은 하루 20만 건(같은 계정의 다른 게임과 함께 씀) → 10번 중 1번만 저장. 게임 동작과는 상관없음
   "observability": {
     "enabled": true,

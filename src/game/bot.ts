@@ -13,7 +13,7 @@ import { placements } from '../sim/arena';
 import { ECON } from './economy';
 import {
   allUnits, buy, buyXp, cellKey, chooseFreePick, chooseReward, lastRound, opponentOf, ownedCount, rand, reroll, sell,
-  toBattleBoard,
+  setBoardFrom, toBattleBoard,
 } from './game';
 import { FAM_ORDER, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, planEquip, slotCount, synergyOf } from './items';
 import type { BagItem, GameState, PlayerState, UnitInst } from './types';
@@ -417,10 +417,7 @@ function hardPrep(g: GameState, p: PlayerState) {
 /** 친구 유령: 그 친구가 그 라운드에 실제로 둔 판(기록보다 라운드가 길면 마지막 판) */
 function ghostPrep(g: GameState, p: PlayerState) {
   const rounds = p.ghost!;
-  const b = rounds[Math.min(g.round - 1, rounds.length - 1)] ?? [];
-  p.board.clear();
-  for (const u of b) p.board.set(cellKey(u.row, u.col), { uid: g.nextUid++, char: u.char, star: u.star, items: (u.items ?? []).slice(0, 2) });
-  p.bench = Array(ECON.benchSize).fill(null);
+  setBoardFrom(g, p, rounds[Math.min(g.round - 1, rounds.length - 1)] ?? []);
   p.ai = { ...(p.ai ?? {}), keepEmpty: true };
 }
 

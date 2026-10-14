@@ -7,7 +7,7 @@ import { songText } from '../engine/describe';
 import { formatBattleLog } from '../engine/log';
 import type { BoardUnit, FamilyId, RoleId } from '../engine/types';
 import {
-  advance, boardCount, buy, buyXp, cellKey, chooseFreePick, chooseReward, createGame, currentPlan, findUnit,
+  advance, autoFill, boardCount, buy, buyXp, cellKey, chooseFreePick, chooseReward, createGame, createOnlineGame, currentPlan, findUnit, setBoardFrom,
   allUnits, income, move, opponentOf, ownedCount, ranking, reroll, resolveRound, sell, sellValue, toBattleBoard, toggleLock,
   type RoundOutcome,
 } from '../game/game';
@@ -27,7 +27,11 @@ import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe, 
 import { QUIZ, TUT_ROUNDS, TUT_STEPS, createTutorial, fixTutorialRewards, prepareTutorialRound, stepDone, tutorialAllows, type TutTalk } from '../game/tutorial';
 import { readAloud } from './battle-view';
 import { TIPS, battleTips, clearPending, markSeen, mergeSeen, pendingTips, prepTip, prepTipLine, seenTips } from './tips';
-import { fetchGhosts, getAuth, saveProgress, saveRecord } from '../net/api';
+import { createRoom, fetchGhosts, fetchRanking, getAuth, listRooms, saveProgress, saveRecord } from '../net/api';
+import { RoomConn, type ConnStatus } from '../net/room';
+import { cleanBoard } from '../shared/board';
+import type { ClientMsg, FinalPlace, LobbyRoom, RankRow, RoomInfo, RoundMsg, ServerMsg } from '../shared/online';
+import { placePointsText, rankTier } from '../shared/rank';
 import { josa, josaOnly } from '../shared/josa';
 
 // ---------------- 상태 ----------------
@@ -71,7 +75,14 @@ const tutorialDoneLocal = () => {
     return false;
   }
 };
-type Modal = { type: 'start' } | { type: 'result'; outcome: RoundOutcome } | { type: 'notebook'; back: Modal | null } | null;
+type Modal =
+  | { type: 'start' }
+  | { type: 'result'; outcome: RoundOutcome }
+  | { type: 'notebook'; back: Modal | null }
+  | { type: 'lobby' }
+  | { type: 'room' }
+  | { type: 'rank'; scope: 'school' | 'all'; back: Modal | null }
+  | null;
 let modal: Modal = { type: 'start' };
 let nbNum = 12;
 type StartDiff = Difficulty | 'mix';
@@ -86,7 +97,9 @@ const DIFF_LABEL: Record<Difficulty, string> = { easy: '쉬움', normal: '보통
 let toastMsg = '';
 let toastTimer = 0;
 const app = document.getElementById('app')!;
-const me = () => g!.players[0];
+/** 내 자리(온라인 대결은 방에서 앉은 순서, 그 밖에는 0) */
+let meIdx = 0;
+const me = () => g!.players[meIdx];
 
 const COST_COLOR = ['', 'var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)', 'var(--c5)'];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -409,7 +422,7 @@ function scoutsHtml(p: PlayerState) {
     const av = top ? charArt(top.char, 30, { star: top.star, noNumber: true, noGems: true }) : '<span style="width:30px;text-align:center">🙂</span>';
     const vs = q.id === vsId;
     const tag = vs ? `<em>${o?.kind === 'pvp' && o.mirror ? '거울 상대' : '이번 상대'}</em>` : '';
-    const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : '';
+    const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : q.remote && online ? tierBadge(online.points[q.id] ?? 0, true) : '';
     return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
@@ -474,6 +487,9 @@ function scoutHtml(pid: number): string {
 // ---------------- 모달 ----------------
 function modalHtml(): string {
   if (modal?.type === 'notebook') return notebookHtml();
+  if (modal?.type === 'lobby') return lobbyHtml();
+  if (modal?.type === 'room') return roomHtml();
+  if (modal?.type === 'rank') return rankHtml(modal);
   if (!g || modal?.type === 'start') {
     return `<div class="modal"><div class="box">
       <h2>숫자체스: 합창 대작전</h2>
@@ -492,8 +508,9 @@ function modalHtml(): string {
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 <span class="nw">(약 8분)</span></button>
         ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
+      <button class="choice onlinebtn" data-action="lobby"><b class="jua" style="font-size:22px">⚔️ 온라인 대결 (랭크)</b><br>친구와 2~4명이 동시에 · 등수대로 점수 · 브론즈 → 챌린저${getAuth() ? '' : '<br><small>들어가기를 하면 할 수 있어요</small>'}</button>
       <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요.</p>
-      <p class="links"><a href="./dogam.html">🐾 캐릭터 도감</a> <a href="#" data-action="notebook">📘 수학 수첩</a></p>
+      <p class="links"><a href="./dogam.html">🐾 캐릭터 도감</a> <a href="#" data-action="notebook">📘 수학 수첩</a> <a href="#" data-action="rank">🏆 랭킹</a></p>
     </div></div>`;
   }
   if (battle) return '';
@@ -519,7 +536,8 @@ function modalHtml(): string {
       <div class="hl">👑 1등: <b>${esc(r[0].name)}</b></div>
       <div class="hl">내 메달 <b class="jua" style="font-size:22px">${mine.medals}개</b> · 이긴 판 ${mine.wins}번 · 한 라운드 최고 메달 ${best}개</div>
       ${bestChorus ? `<div class="hl tip">🔎 오늘의 수학 발견: ${bestChorus.round}라운드 <b>${bestChorus.beat}박</b>에 ${josa([...bestChorus.nums].sort((a, b) => a - b).join('·'), '이/가')} 함께 노래했어요 — 모두 ${bestChorus.beat}의 약수! <span class="sub">(${bestChorus.beat}의 약수: ${divisors(bestChorus.beat).join(', ')})</span></div>` : ''}
-      <button class="btn gold" data-action="restart">새 게임</button></div></div>`;
+      ${online?.final ? onlineFinalHtml(online.final) : ''}
+      <button class="btn gold" data-action="restart">${online ? '처음 화면' : '새 게임'}</button></div></div>`;
   }
   return '';
 }
@@ -554,6 +572,7 @@ function resultHtml(o: RoundOutcome) {
 
 // ---------------- 그리기 ----------------
 function render() {
+  pumpOnline();
   if (!g) {
     app.innerHTML = modalHtml();
     return;
@@ -587,7 +606,8 @@ function render() {
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
         <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (4골드)</button>` : '<small>최고 레벨</small>'}</div>
       <button class="btn small ghost nb" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘<span class="nbt"> 수첩</span></button>
-      ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : '<button class="btn gold ready" data-action="ready">준비 완료 ▶</button>'}
+      ${online?.playing && g.phase !== 'over' ? `<span class="otimer nc-timer">${fmtLeft(online.deadline - Date.now())}</span>` : ''}
+      ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : onlineLocked() ? `<span class="ready tag waiting">⏳ 기다리는 중 ${online!.readyN}/${g.players.length}<small class="nc-timer mt">${fmtLeft(online!.deadline - Date.now())}</small></span>` : `<button class="btn gold ready" data-action="ready">준비 완료 ▶${online?.playing ? `<small class="nc-timer mt">${fmtLeft(online.deadline - Date.now())}</small>` : ''}</button>`}
       <i class="brk"></i>
     </header>
     <nav class="synstrip">${syn.strip}</nav>
@@ -646,18 +666,8 @@ function newGame(bots: number, short: boolean) {
   const mix: Difficulty[] = ['easy', 'normal', 'hard'];
   const difficulties = Array.from({ length: bots }, (_, i) => (startDiff === 'mix' ? mix[i % 3] : startDiff));
   g = createGame({ seed: (Date.now() ^ (Math.random() * 1e9)) >>> 0, bots, short, difficulties });
+  resetRun();
   for (const p of g.players) if (p.isBot) botFreePick(g, p);
-  selected = null;
-  modal = null;
-  botsPreppedRound = -1;
-  bestChorus = null;
-  myBoards = [];
-  met.clear();
-  three.clear();
-  morphs.clear();
-  recordSaved = false;
-  battle?.stop();
-  battle = null;
 }
 
 /** 컴퓨터는 라운드가 시작할 때 미리 배치한다(그래야 구경한 판 = 실제로 싸울 판) */
@@ -668,6 +678,7 @@ function prepBots() {
 }
 
 function onReady() {
+  if (online?.playing) return onlineReady();
   if (!g || g.phase !== 'prep' || battle) return;
   unlockAudio();
   prepBots();
@@ -675,15 +686,20 @@ function onReady() {
   if (tut) fixTutorialRewards(g);
   else botRewards(g);
   selected = null;
+  noteRound(outcome, toBattleBoard(me()));
+  startBattle(outcome);
+}
+
+/** 라운드 기록: 유령용 내 판, 변신한 숫자, 가장 큰 합창 */
+function noteRound(outcome: RoundOutcome, myBoard: BoardUnit[]) {
   const p = me();
-  myBoards.push(toBattleBoard(p));
+  myBoards.push(myBoard);
   for (const u of p.board.values()) if (numberOf(u) !== u.char) morphs.add(`${u.char}>${numberOf(u)}`);
   const fight = outcome.fights.find((f) => f.a === p.id || (!f.mirror && f.b === p.id));
   if (fight) {
     const big = battleInsight(fight.result, fight.a === p.id ? 0 : 1).bigChorus;
     if (big && (!bestChorus || big.count > bestChorus.count)) bestChorus = { ...big, round: outcome.round };
   }
-  startBattle(outcome);
 }
 
 function startBattle(outcome: RoundOutcome) {
@@ -745,6 +761,47 @@ app.addEventListener('click', (ev) => {
     startTutorial();
     return render();
   }
+  if (a === 'lobby') {
+    openLobby();
+    return render();
+  }
+  if (a === 'lobbyback') {
+    clearInterval(lobbyTimer);
+    modal = { type: 'start' };
+    return render();
+  }
+  if (a === 'refreshrooms') {
+    void refreshRooms(true);
+    return;
+  }
+  if (a === 'mkroom') {
+    void makeRoom(el.dataset.short === '1');
+    return;
+  }
+  if (a === 'joinroom') {
+    joinRoom(el.dataset.id!);
+    return render();
+  }
+  if (a === 'leaveroom') {
+    leaveOnline();
+    openLobby();
+    return render();
+  }
+  if (a === 'startroom') {
+    online?.conn.send({ t: 'start' });
+    return;
+  }
+  if (a === 'rank' || a === 'rankscope') {
+    const scope = a === 'rankscope' ? (el.dataset.scope as 'school' | 'all') : getAuth() ? 'school' : 'all';
+    modal = { type: 'rank', scope, back: modal?.type === 'rank' ? modal.back : modal };
+    void loadRanking(scope);
+    return render();
+  }
+  if (a === 'rankback') {
+    modal = modal?.type === 'rank' ? modal.back : { type: 'start' };
+    if (modal?.type === 'lobby') openLobby();
+    return render();
+  }
   if (a === 'notebook') {
     ev.preventDefault();
     if (modal?.type !== 'notebook') modal = { type: 'notebook', back: modal };
@@ -779,6 +836,10 @@ app.addEventListener('click', (ev) => {
       toast('하나쌤 말풍선을 먼저 읽고 [알겠어]를 눌러 봐!');
       return render();
     }
+  }
+  if (onlineLocked() && LOCKED_WHEN_READY.has(a)) {
+    toast('준비 완료! 다른 친구를 기다려요');
+    return render();
   }
   const selBefore = JSON.stringify(selected);
   switch (a) {
@@ -893,16 +954,20 @@ app.addEventListener('click', (ev) => {
       modal = null;
       if (g.phase === 'prep') {
         advance(g);
+        onlineAdvanced();
         if (tut) prepareTutorialRound(g);
       }
       break;
     case 'reward':
       check(chooseReward(g, p.id, Number(el.dataset.i)));
       advance(g);
+      onlineAdvanced();
       if (tut) prepareTutorialRound(g);
       break;
     case 'restart':
+      leaveOnline();
       g = null;
+      meIdx = 0;
       modal = { type: 'start' };
       break;
   }
@@ -912,6 +977,323 @@ app.addEventListener('click', (ev) => {
   tutorialCheck();
   render();
 });
+
+// ---------------- 온라인 대결(랭크) ----------------
+// 서버 요청: 방 목록 화면이 열려 있을 때만 5초마다 1번(최대 10분), 게임 중에는 WebSocket 하나로 라운드마다 보드 1번.
+let lobbyRooms: LobbyRoom[] | null = null;
+let lobbyTimer = 0;
+let rankRows: RankRow[] | null = null;
+let online: {
+  conn: RoomConn;
+  room: RoomInfo | null;
+  you: number;
+  playing: boolean;
+  /** 이번 라운드 준비 마감(이 기기 시각) */
+  deadline: number;
+  submitted: boolean;
+  readyN: number;
+  queue: RoundMsg[];
+  applied: Set<number>;
+  nextMonster: number | null;
+  final: FinalPlace[] | null;
+  lastReady: ClientMsg | null;
+  status: ConnStatus;
+  points: number[];
+} | null = null;
+let onlineTimer = 0;
+/** 준비 완료를 누른 뒤에는 판을 못 바꿈(서버가 이미 받은 보드로 싸우니까) */
+const LOCKED_WHEN_READY = new Set(['buy', 'sell', 'sellzone', 'reroll', 'xp', 'lock', 'cell', 'benchslot', 'unit', 'bagitem', 'equipok', 'unequip', 'pick']);
+const onlineLocked = () => !!online?.playing && online.submitted;
+
+const tierBadge = (points: number, small = false) => {
+  const t = rankTier(points);
+  return `<span class="tier ${small ? 'sm' : ''}" style="--tc:${t.color}">${t.icon} ${t.label}</span>`;
+};
+const fmtLeft = (ms: number) => {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `⏱ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+function openLobby() {
+  if (!getAuth()) {
+    toast('들어가기(학교 · 닉네임 · 비밀번호)를 하면 온라인 대결을 할 수 있어요');
+    return;
+  }
+  modal = { type: 'lobby' };
+  void refreshRooms(false);
+  clearInterval(lobbyTimer);
+  let polls = 0;
+  lobbyTimer = window.setInterval(() => {
+    if (modal?.type !== 'lobby' || ++polls > 120) return clearInterval(lobbyTimer);
+    if (document.visibilityState === 'visible') void refreshRooms(false);
+  }, 5000);
+}
+async function refreshRooms(manual: boolean) {
+  const r = await listRooms();
+  lobbyRooms = r.ok ? r.rooms : [];
+  if (!r.ok && manual) toast(r.error ?? '방 목록을 불러오지 못했어요');
+  if (modal?.type === 'lobby') render();
+}
+async function makeRoom(short: boolean) {
+  const r = await createRoom(short);
+  if (!r.ok) {
+    toast(r.error ?? '방을 만들지 못했어요');
+    return render();
+  }
+  joinRoom(r.id);
+  render();
+}
+function joinRoom(id: string) {
+  clearInterval(lobbyTimer);
+  online?.conn.stop();
+  const o: NonNullable<typeof online> = {
+    conn: null as unknown as RoomConn, room: null, you: -1, playing: false, deadline: 0, submitted: false, readyN: 0,
+    queue: [], applied: new Set(), nextMonster: null, final: null, lastReady: null, status: 'retry', points: [],
+  };
+  online = o;
+  o.conn = new RoomConn(id, (m) => onServer(o, m), (st, why) => onConn(o, st, why), () => (o.playing && g ? g.round : 0));
+  modal = { type: 'room' };
+}
+function leaveOnline() {
+  online?.conn.leave();
+  online = null;
+  clearInterval(onlineTimer);
+}
+
+function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
+  if (online !== o) return;
+  switch (m.t) {
+    case 'room':
+      o.room = m.room;
+      o.you = m.you;
+      if (!o.playing) modal = { type: 'room' };
+      break;
+    case 'start':
+      startOnline(o, m);
+      break;
+    case 'ready':
+      if (g && m.round === g.round) o.readyN = m.n;
+      break;
+    case 'round':
+      if (!o.applied.has(m.round) && !o.queue.some((x) => x.round === m.round)) o.queue.push(m);
+      break;
+    case 'state':
+      o.deadline = Date.now() + m.remainMs;
+      // 끊긴 사이에 준비 완료가 안 갔으면 다시 보냄
+      if (!m.submitted && o.submitted && o.lastReady?.t === 'ready' && o.lastReady.round === m.round) o.conn.send(o.lastReady);
+      break;
+    case 'error':
+      toast(m.error);
+      if (!o.playing) {
+        online = null;
+        openLobby();
+      }
+      break;
+  }
+  render();
+}
+
+function onConn(o: NonNullable<typeof online>, st: ConnStatus, why?: string) {
+  if (online !== o) return;
+  o.status = st;
+  if (st === 'retry') toast('연결이 끊겼어요. 다시 잇는 중…');
+  if (st === 'closed') {
+    if (why === 'replaced') toast('다른 화면에서 이 방에 들어갔어요.');
+    else if (why === 'lost') toast('온라인 연결이 끊겼어요. 남은 라운드는 마지막 보드로 계산돼요.');
+    if (!o.playing) {
+      online = null;
+      if (why !== 'leave') openLobby();
+    }
+  }
+  render();
+}
+
+function resetRun() {
+  selected = null;
+  modal = null;
+  botsPreppedRound = -1;
+  bestChorus = null;
+  myBoards = [];
+  met.clear();
+  three.clear();
+  morphs.clear();
+  recordSaved = false;
+  battle?.stop();
+  battle = null;
+  meIdx = 0;
+}
+
+function startOnline(o: NonNullable<typeof online>, m: Extract<ServerMsg, { t: 'start' }>) {
+  resetRun();
+  o.playing = true;
+  o.points = m.points;
+  o.you = m.you;
+  g = createOnlineGame({ seed: m.seed, short: m.short, names: m.names.map((n, i) => (i === m.you ? '나' : n)), mySeat: m.you });
+  meIdx = m.you;
+  g.monsterIndex = m.monsterIndex;
+  o.deadline = Date.now() + m.remainMs;
+  o.submitted = false;
+  o.queue = [];
+  o.applied.clear();
+  clearInterval(onlineTimer);
+  onlineTimer = window.setInterval(tickOnline, 1000);
+}
+
+/** 준비 완료: 내 판을 서버에 한 번 보냄 */
+function onlineReady() {
+  const o = online;
+  if (!o || !g || o.submitted || battle) return;
+  if (g.phase === 'freePick') chooseFreePick(g, me(), 0);
+  if (g.phase !== 'prep') return;
+  unlockAudio();
+  autoFill(me());
+  const msg: ClientMsg = { t: 'ready', round: g.round, board: cleanBoard(toBattleBoard(me())) };
+  o.lastReady = msg;
+  o.submitted = true;
+  selected = null;
+  if (!o.conn.send(msg)) toast('연결이 끊겨 있어요. 이어지면 다시 보낼게요.');
+}
+
+/** 서버 결과가 와 있고 지금 볼 수 있으면(전투·결과 창이 없을 때) 이번 라운드 전투 시작 */
+function pumpOnline() {
+  const o = online;
+  if (!o?.playing || !g || battle || modal || g.phase === 'reward' || g.phase === 'over') return;
+  const now = g.round;
+  o.queue = o.queue.filter((x) => x.round >= now);
+  const m = o.queue.find((x) => x.round === now);
+  if (!m) return;
+  o.queue = o.queue.filter((x) => x !== m);
+  if (g.phase === 'freePick') chooseFreePick(g, me(), 0);
+  o.applied.add(m.round);
+  // 서버와 같은 보드·짝으로 이 기기에서도 똑같이 계산(전투 장면을 보여 주려고)
+  const outcome = resolveRound(g, { boards: m.boards, pairs: m.pairs });
+  m.medals.forEach((v, i) => {
+    if (g!.players[i]) g!.players[i].medals = v;
+  });
+  g.pendingRewards = g.pendingRewards.filter((r) => !g!.players[r.playerId].remote);
+  if (!g.pendingRewards.length) g.phase = 'prep';
+  g.players.forEach((q, i) => {
+    if (q.remote) setBoardFrom(g!, q, m.boards[i] ?? []);
+  });
+  o.nextMonster = m.next?.monsterIndex ?? null;
+  o.deadline = m.next ? Date.now() + m.next.remainMs : 0;
+  o.submitted = false;
+  o.readyN = 0;
+  o.lastReady = null;
+  if (m.final) o.final = m.final;
+  noteRound(outcome, m.boards[meIdx] ?? []);
+  startBattle(outcome);
+}
+
+/** 다음 라운드로 넘어간 뒤: 몬스터는 서버가 고른 것으로 */
+function onlineAdvanced() {
+  if (online?.playing && g && online.nextMonster !== null) g.monsterIndex = online.nextMonster;
+}
+
+function tickOnline() {
+  const o = online;
+  if (!o?.playing || !g || g.phase === 'over') {
+    clearInterval(onlineTimer);
+    return;
+  }
+  const left = o.deadline - Date.now();
+  document.querySelectorAll('.nc-timer').forEach((el) => {
+    el.textContent = fmtLeft(left);
+    el.classList.toggle('hurry', left < 10_000);
+  });
+  // 시간이 다 되면 지금 판으로 자동 준비 완료(보상 창이 떠 있으면 첫 번째 보상)
+  if (left <= 1500 && !o.submitted && !battle && !modal) {
+    if (g.phase === 'reward') {
+      chooseReward(g, me().id, 0);
+      advance(g);
+      onlineAdvanced();
+    }
+    if (g.phase === 'prep' || g.phase === 'freePick') {
+      onlineReady();
+      render();
+    }
+  }
+}
+
+function lobbyHtml(): string {
+  const rec = myRecord();
+  const pts = rec?.points ?? 0;
+  const t = rankTier(pts);
+  const rooms = lobbyRooms === null
+    ? '<div class="sub">불러오는 중…</div>'
+    : lobbyRooms.length
+      ? lobbyRooms.map((r) => `<button class="roomrow" data-action="joinroom" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.short ? '짧은 판 · 8라운드' : '12라운드'}</small></span><span class="cnt">${r.n}/${r.size}명</span><em>들어가기 ▶</em></button>`).join('')
+      : '<div class="sub">아직 열린 방이 없어요. 방을 만들고 친구를 불러요!</div>';
+  return `<div class="modal"><div class="box lobby">
+    <button class="btn small ghost close" data-action="lobbyback" style="float:right">← 처음 화면</button>
+    <h2>⚔️ 온라인 대결</h2>
+    <div class="hl myrank">${tierBadge(pts)} <b class="jua">${pts}점</b> <span class="sub">${t.toNext ? `다음 단계까지 ${t.toNext}점` : '가장 높은 티어!'} · 랭크 판 ${rec?.ranked ?? 0}번</span></div>
+    <p class="sub">같은 방 친구들과 동시에 겨뤄요(2~4명). 끝난 등수대로 점수를 얻거나 잃어요.<br>4명일 때 ${placePointsText(4)} <span class="nw">(브론즈는 잃는 점수 절반)</span></p>
+    <h3 class="jua">들어갈 수 있는 방</h3>
+    <div class="rooms">${rooms}</div>
+    <div class="lobbybtns">
+      <button class="btn gold" data-action="mkroom" data-short="0">＋ 방 만들기 (12라운드)</button>
+      <button class="btn" data-action="mkroom" data-short="1">＋ 짧은 판 방 (8라운드)</button>
+      <button class="btn ghost" data-action="refreshrooms">↻ 새로고침</button>
+      <button class="btn ghost" data-action="rank">🏆 랭킹</button>
+    </div>
+  </div></div>`;
+}
+
+function roomHtml(): string {
+  const o = online;
+  const r = o?.room;
+  if (!o || !r) {
+    return `<div class="modal"><div class="box"><h2>방에 들어가는 중…</h2><p><button class="btn ghost" data-action="leaveroom">나가기</button></p></div></div>`;
+  }
+  const host = o.you === r.host;
+  const seats = Array.from({ length: r.size }, (_, i) => r.seats[i]);
+  return `<div class="modal"><div class="box roombox">
+    <h2>⚔️ ${r.short ? '짧은 판' : '12라운드'} 방 <span class="sub code">${r.id}</span></h2>
+    <div class="sub">2~4명 · 방장이 시작해요 · 라운드마다 준비 시간이 있어요(시간이 다 되면 그때 판으로 싸워요)</div>
+    <div class="seats">${seats.map((s, i) => (s
+      ? `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${tierBadge(s.points, true)}${i === r.host ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`
+      : '<div class="seat empty">빈 자리</div>')).join('')}</div>
+    ${host
+      ? `<button class="btn gold bigbtn" data-action="startroom" ${r.seats.length < 2 ? 'disabled' : ''}>▶ 시작하기 (${r.seats.length}명)</button>${r.seats.length < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
+      : '<div class="hl">방장이 시작하기를 기다려요…</div>'}
+    <p class="sub">이 방 점수: ${placePointsText(Math.max(2, r.seats.length))}</p>
+    <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>
+  </div></div>`;
+}
+
+function rankHtml(m: Extract<Modal, { type: 'rank' }>): string {
+  const a = getAuth();
+  const list = rankRows === null
+    ? '<div class="sub">불러오는 중…</div>'
+    : rankRows.length
+      ? `<ol class="ranklist">${rankRows.map((r, i) => `<li class="${a && r.nick === a.nick ? 'me' : ''}"><span class="no">${i + 1}</span>${tierBadge(r.points, true)}<b>${esc(r.nick)}</b><small>${esc(r.schoolName)}</small><span class="pts">${r.points}점</span></li>`).join('')}</ol>`
+      : '<div class="sub">아직 랭크 판을 한 친구가 없어요.</div>';
+  return `<div class="modal"><div class="box rankbox">
+    <button class="btn small ghost close" data-action="rankback" style="float:right">← 뒤로</button>
+    <h2>🏆 랭킹</h2>
+    <div class="tabs"><button class="btn small ${m.scope === 'school' ? 'on' : 'ghost'}" data-action="rankscope" data-scope="school">우리 학교</button> <button class="btn small ${m.scope === 'all' ? 'on' : 'ghost'}" data-action="rankscope" data-scope="all">전체</button></div>
+    ${list}
+    <p class="sub">브론즈 → 실버 → 골드 → 플래티넘 → 에메랄드 → 다이아몬드 → 마스터 → 그랜드마스터 → 챌린저<br>300점마다 한 티어, 마스터 아래는 100점마다 3 → 2 → 1단계</p>
+  </div></div>`;
+}
+async function loadRanking(scope: 'school' | 'all') {
+  rankRows = null;
+  const r = await fetchRanking(scope);
+  rankRows = r.ok ? r.rows : [];
+  if (!r.ok) toast(r.error ?? '랭킹을 불러오지 못했어요');
+  render();
+}
+
+function onlineFinalHtml(f: FinalPlace[]): string {
+  const rows = [...f].sort((a, b) => a.place - b.place).map((x) => `<div class="frow ${x.seat === meIdx ? 'me' : ''}"><b class="jua">${x.place}등</b><span>${esc(g!.players[x.seat]?.name ?? '')}</span><small>메달 ${x.medals}</small>${tierBadge(x.after, true)}<span class="${x.delta >= 0 ? 'up' : 'down'}">${x.delta > 0 ? '+' : ''}${x.delta}점</span></div>`).join('');
+  const mine = f.find((x) => x.seat === meIdx);
+  if (!mine) return `<div class="hl finals">${rows}</div>`;
+  const tb = rankTier(mine.before);
+  const ta = rankTier(mine.after);
+  const change = ta.index > tb.index ? `🎉 승급! ${tb.label} → <b>${ta.label}</b>` : ta.index < tb.index ? `${tb.label} → ${ta.label}. 다음 판에 다시 올라가요!` : ta.div !== tb.div ? `${tb.label} → <b>${ta.label}</b>` : `${ta.label} 그대로`;
+  return `<div class="hl finals">${rows}</div><div class="hl tip">🏆 ${change} · ${mine.before}점 → <b>${mine.after}점</b></div>`;
+}
 
 // ---------------- 처음 보는 순간 · 수학 수첩 ----------------
 const tipDocked = (p: PlayerState) => !tut && !battle && !modal && g?.phase === 'prep' && !!prepTip(p);
@@ -1118,7 +1500,7 @@ function track() {
   }
   if (g.phase === 'over' && !recordSaved && getAuth()) {
     recordSaved = true;
-    const rank = ranking(g).findIndex((q) => q.id === 0) + 1;
+    const rank = ranking(g).findIndex((q) => q.id === me().id) + 1;
     // 요청 한 번에 기록 + 본 말풍선 + 친구 유령(유령과 겨룬 판은 유령으로 남기지 않음)
     const tips = pendingTips();
     void saveRecord({
@@ -1168,6 +1550,10 @@ app.addEventListener('dragover', (ev) => {
 app.addEventListener('drop', (ev) => {
   ev.preventDefault();
   if (!g || battle) return;
+  if (onlineLocked()) {
+    toast('준비 완료! 다른 친구를 기다려요');
+    return render();
+  }
   const data = ev.dataTransfer?.getData('text/plain') ?? '';
   if (data.startsWith('item:')) {
     const target = (ev.target as HTMLElement).closest<HTMLElement>('[data-action="unit"]');

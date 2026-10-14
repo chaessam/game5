@@ -15,5 +15,5 @@ export default defineConfig({
   },
   worker: { format: 'es' },
   // 내 컴퓨터에서: npm run cf:dev(서버, 8787)를 켜 두면 vite 화면에서도 로그인·기록이 된다
-  server: { proxy: { '/api': 'http://127.0.0.1:8787' } },
+  server: { proxy: { '/api': { target: 'http://127.0.0.1:8787', ws: true } } },
 });

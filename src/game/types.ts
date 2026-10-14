@@ -33,6 +33,8 @@ export interface PlayerState {
   isBot: boolean;
   difficulty: Difficulty;
   ai?: BotMemory;
+  /** 온라인 대결: 다른 기기에서 두는 친구(보드는 서버가 라운드마다 알려 줌, 상점·보상 없음) */
+  remote?: boolean;
   /** 친구 유령: 라운드별 보드(같은 학교 친구가 실제로 둔 판). 있으면 상점 대신 이 판으로 싸운다 */
   ghost?: import('../engine/types').BoardUnit[][];
   gold: number;

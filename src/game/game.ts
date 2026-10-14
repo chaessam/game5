@@ -74,6 +74,38 @@ export function createGame(opts: NewGameOptions): GameState {
   return g;
 }
 
+/**
+ * 온라인 대결 판: 자리 순서대로 플레이어(내 자리만 직접 둠, 나머지는 원격). 서버는 mySeat = -1(모두 원격).
+ * 같은 시드·사람 수면 서버와 모든 기기의 첫 상태가 같고, 라운드 결과도 resolveRound(g, { boards, pairs })로 똑같이 나온다.
+ */
+export function createOnlineGame(opts: { seed: number; short: boolean; names: string[]; mySeat: number }): GameState {
+  const g = createGame({ seed: opts.seed, short: opts.short, bots: opts.names.length - 1 });
+  g.players.forEach((p, i) => {
+    p.name = opts.names[i];
+    p.isBot = false;
+    p.remote = i !== opts.mySeat;
+    if (p.remote) delete g.freePick[p.id];
+  });
+  if (g.phase === 'freePick' && !Object.keys(g.freePick).length) g.phase = 'prep';
+  return g;
+}
+
+/** 서버 저장용(보드 Map → 배열) */
+export function serializeGame(g: GameState): string {
+  return JSON.stringify({ ...g, log: [], players: g.players.map((p) => ({ ...p, board: [...p.board.entries()] })) });
+}
+export function deserializeGame(s: string): GameState {
+  const o = JSON.parse(s) as GameState & { players: (PlayerState & { board: [string, UnitInst][] })[] };
+  return { ...o, players: o.players.map((p) => ({ ...p, board: new Map(p.board) })) };
+}
+
+/** 원격 친구(또는 유령)의 보드를 그대로 놓기 */
+export function setBoardFrom(g: GameState, p: PlayerState, board: readonly BoardUnit[]) {
+  p.board.clear();
+  for (const u of board) p.board.set(cellKey(u.row, u.col), { uid: g.nextUid++, char: u.char, star: u.star, items: (u.items ?? []).slice(0, 2) });
+  p.bench = Array(ECON.benchSize).fill(null);
+}
+
 export const currentPlan = (g: GameState): RoundPlan => g.rounds[g.round - 1];
 export const lastRound = (g: GameState) => g.rounds.length;
 
@@ -399,7 +431,13 @@ export interface RoundOutcome {
   gold: Record<number, number>;
 }
 
-function pairings(g: GameState): { a: number; b: number; mirror: boolean }[] {
+export interface Pair {
+  a: number;
+  b: number;
+  mirror: boolean;
+}
+/** 이번 라운드 친구 대결 짝(온라인: 서버가 정해서 보냄) */
+export function pairings(g: GameState): Pair[] {
   const n = g.players.length;
   const pvpRounds = g.rounds.filter((r) => r.kind === 'pvp');
   const k = pvpRounds.findIndex((r) => r.round === g.round);
@@ -484,10 +522,21 @@ export function chooseReward(g: GameState, playerId: number, index: number): Act
   return { ok: true };
 }
 
+export interface ResolveOptions {
+  /** 온라인: 자리마다 서버가 받은 보드(있으면 이 보드로 싸움, 자동 채우기 안 함) */
+  boards?: (BoardUnit[] | null | undefined)[];
+  /** 온라인: 서버가 정한 대결 짝 */
+  pairs?: Pair[];
+  /** 서버: 전투 기록·장면 없이 결과만(계산 아끼기) */
+  light?: boolean;
+}
+
 /** 준비 끝 → 모든 전투 → 메달·골드·연승연패 → 보상 대기 또는 다음 라운드 준비 */
-export function resolveRound(g: GameState): RoundOutcome {
+export function resolveRound(g: GameState, opts: ResolveOptions = {}): RoundOutcome {
   const plan = currentPlan(g);
-  for (const p of g.players) autoFill(p);
+  for (const p of g.players) if (!opts.boards?.[p.id]) autoFill(p);
+  const boardOf = (p: PlayerState) => opts.boards?.[p.id] ?? toBattleBoard(p);
+  const bopts = opts.light ? {} : { log: true, frames: true };
   const out: RoundOutcome = { round: g.round, kind: plan.kind, fights: [], medals: {}, gold: {} };
   const addMedal = (p: PlayerState, m: number) => {
     p.medals += m;
@@ -496,7 +545,7 @@ export function resolveRound(g: GameState): RoundOutcome {
   if (plan.kind === 'pve') {
     const mon = monsterFor(g);
     for (const p of g.players) {
-      const result = runBattle(toBattleBoard(p), mon.board, { log: true, frames: true });
+      const result = runBattle(boardOf(p), mon.board, bopts);
       const win = result.winner === 0;
       addMedal(p, win ? MEDALS.pve.win : MEDALS.pve.loss);
       if (win) {
@@ -508,10 +557,10 @@ export function resolveRound(g: GameState): RoundOutcome {
       g.pendingRewards.push(rewardOptions(g, p));
     }
   } else {
-    for (const pr of pairings(g)) {
+    for (const pr of opts.pairs ?? pairings(g)) {
       const A = g.players[pr.a];
       const B = g.players[pr.b];
-      const result = runBattle(toBattleBoard(A), toBattleBoard(B), { log: true, frames: true });
+      const result = runBattle(boardOf(A), boardOf(B), bopts);
       out.fights.push({ a: pr.a, b: pr.b, mirror: pr.mirror, label: pr.mirror ? `거울 ${B.name}` : B.name, result });
       const sides: [PlayerState, 0 | 1][] = pr.mirror ? [[A, 0]] : [[A, 0], [B, 1]];
       for (const [p, side] of sides) {

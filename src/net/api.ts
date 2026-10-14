@@ -1,5 +1,6 @@
 // 서버(Cloudflare Worker /api)와 이야기하기. 서버가 없거나(내 컴퓨터 vite) 한도가 차도 게임은 그대로 된다.
 import type { BoardUnit } from '../engine/types';
+import type { LobbyRoom, RankRow } from '../shared/online';
 
 export interface Auth {
   token: string;
@@ -18,6 +19,9 @@ export interface MyRecord {
   collection: { met?: number[]; three?: number[]; morphs?: string[] };
   tutorial: boolean;
   tips: string[];
+  /** 랭크 점수 · 랭크 판 수 */
+  points: number;
+  ranked: number;
 }
 
 const KEY = 'nc-auth';
@@ -85,3 +89,10 @@ export const saveRecord = (r: {
   ghost: { rounds: BoardUnit[][]; level: number } | null;
 }) => (auth ? call<{ record: MyRecord }>('POST', 'record', r) : Promise.resolve({ ok: false } as const));
 export const fetchGhosts = (n: number) => call<{ ghosts: { nick: string; rounds: BoardUnit[][] }[] }>('GET', `ghosts?n=${n}`);
+
+// ---- 온라인 대결(랭크) ----
+// 방 목록은 방 고르는 화면이 열려 있을 때만 몇 초마다 1번, 게임 중에는 WebSocket 하나(라운드마다 보드 1번)
+export const listRooms = () => call<{ rooms: LobbyRoom[] }>('GET', 'rooms');
+export const createRoom = (short: boolean) => call<{ id: string }>('POST', 'rooms', { short, size: 4 });
+export const fetchRanking = (scope: 'school' | 'all') => call<{ rows: RankRow[] }>('GET', `ranking?scope=${scope}`);
+export const roomSocketUrl = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/room/${id}/ws?t=${encodeURIComponent(auth?.token ?? '')}`;
