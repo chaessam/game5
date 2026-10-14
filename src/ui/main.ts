@@ -12,7 +12,8 @@ import {
   type RoundOutcome,
 } from '../game/game';
 import { botFreePick, botPrep, botRewards } from '../game/bot';
-import { deserializeGame, serializeGame } from '../game/game';
+import { chooseCard, deserializeGame, giftUnit, partnerOf, receiveGift, rerollCostOf, serializeGame, takeForGift, teamTotals, xpCostOf } from '../game/game';
+import { MAGIC_CARDS, cardById, modsOf, ruleById, ruleOfWeek } from '../game/magic';
 import { ECON, SHOP_ODDS } from '../game/economy';
 import {
   FAM_ORDER, ITEM_HELP, ITEM_LABEL, ITEM_NAME, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, previewEquip, secondSlotRound, slotCount,
@@ -42,6 +43,8 @@ let selected:
   | { kind: 'shop'; index: number }
   | { kind: 'scout'; pid: number }
   | { kind: 'syn'; key: string }
+  | { kind: 'cards' }
+  | { kind: 'rule' }
   | { kind: 'item'; index: number }
   | { kind: 'equip'; index: number; uid: number }
   | null = null;
@@ -119,7 +122,7 @@ function toast(msg: string) {
 
 // ---------------- 시너지 계산(보드 위 서로 다른 지금 숫자 / 서로 다른 캐릭터) ----------------
 function synergy(p: PlayerState) {
-  const s = synergyOf([...p.board.values()]);
+  const s = synergyOf([...p.board.values()], modsOf(p.cards)?.famBonus);
   const bench = p.bench.filter((u): u is UnitInst => u !== null);
   return {
     fam: s.fam, role: s.role, boardNums: s.nums, boardChars: s.chars,
@@ -151,6 +154,7 @@ function roleEffect(r: RoleId, tierIdx: number): string {
 
 function synPanels(p: PlayerState) {
   const s = synergy(p);
+  const emb = (f: FamilyId) => modsOf(p.cards)?.famBonus?.[f] ?? 0;
   const famRow = (f: FamilyId) => {
     const { count, tier } = s.fam[f];
     const tiers = DEFAULT_CONFIG.famTiers[f];
@@ -158,7 +162,7 @@ function synPanels(p: PlayerState) {
     // 돌로 생긴 로스터 밖 숫자는 점선 칩
     const extra = [...s.boardNums, ...s.benchNums].filter((n, i, a) => !UNIT_IDS.includes(n) && familiesOf(n).includes(f) && a.indexOf(n) === i);
     return `<div class="syn ${tier ? 'on' : ''}" style="--c:${FAM_COLOR[f]}">
-      <div class="synhead">${famIcon(f, 20)}<span class="nm">${FAMILIES[f].name}</span><span class="cnt">${count}명</span></div>
+      <div class="synhead">${famIcon(f, 20)}<span class="nm">${FAMILIES[f].name}</span>${emb(f) && count ? `<span class="embtag" title="마법 카드 문장">🃏+${emb(f)}</span>` : ''}<span class="cnt">${count}명</span></div>
       <div class="rule">${esc(FAMILIES[f].rule)}</div>
       <div class="steps">${tiers.map((t, i) => `<span class="${count >= t ? 'lit' : ''}">${t}명 ${famEffect(f, i)}</span>`).join('')}</div>
       <div class="members">${members.map((n) => `<span class="${s.boardNums.has(n) ? 'mb-on' : s.benchNums.has(n) ? 'mb-wait' : ''}">${n}</span>`).join('')}${extra.map((n) => `<span class="mb-stone ${s.boardNums.has(n) ? 'mb-on' : 'mb-wait'}" title="숫자 돌로 생긴 숫자">${n}</span>`).join('')}</div>
@@ -287,6 +291,16 @@ function benchHtml(p: PlayerState) {
 function detailHtml(p: PlayerState) {
   if (!selected) return '';
   if (selected.kind === 'scout') return scoutHtml(selected.pid);
+  if (selected.kind === 'cards') {
+    const list = (p.cards ?? []).map((id) => cardById(id)).filter(Boolean);
+    return `<aside class="drawer small"><button class="btn small ghost close" data-action="close">닫기</button><h3>🃏 내 숫자 마법 카드</h3>
+      ${list.map((c) => `<div class="mcard mini ${c!.kind}"><span class="mi">${c!.icon}</span><span><b>${esc(c!.name)}</b><br><small>${esc(c!.text)}</small></span></div>`).join('')}
+      <p class="sub">카드는 이번 판 내내 효과가 있어요. ${g!.rounds.length >= 12 ? '3·6·9' : '2·5'}라운드에 한 장씩 골라요.</p></aside>`;
+  }
+  if (selected.kind === 'rule') {
+    const r = ruleById(g!.rule);
+    return r ? `<aside class="drawer small"><button class="btn small ghost close" data-action="close">닫기</button><h3>${r.icon} 이번 주 규칙: ${esc(r.name)}</h3><p>${esc(r.text)}</p><p class="sub">이번 주(월요일~일요일) 모든 판에 똑같이 적용돼요. 다음 주 월요일에 바뀌어요.</p></aside>` : '';
+  }
   if (selected.kind === 'syn') {
     const kind = selected.key.startsWith('fam') ? '숫자 가문 (숫자가 정해요)' : '직업 (캐릭터가 정해요)';
     return `<aside class="drawer small synsheet"><button class="btn small ghost close" data-action="close">닫기</button><div class="sub">${kind}</div>${synPanels(p).card(selected.key)}</aside>`;
@@ -345,7 +359,7 @@ function detailHtml(p: PlayerState) {
       ${owned && handshakes(p).get(owned.unit.uid) ? `<dt>손잡기</dt><dd>${handshakes(p).get(owned.unit.uid)!.with.map((w) => `🤝 ${num}${gwa(num)} ${w.num}: 최대공약수 ${w.g}`).join('<br>')}<br>→ 방패 <b>${handshakes(p).get(owned.unit.uid)!.shield}</b> <small class="sub">(최대공약수 × ${DEFAULT_CONFIG.handshakePerGcd})</small></dd>` : ''}
       <dt>아이템 칸</dt><dd class="islots">${slotsHtml}</dd>
     </dl>
-    ${owned ? `<button class="btn" data-action="sell">팔기 (+${owned.value}골드)</button> <span class="sub">대기석·보드의 빈칸을 누르면 옮겨요</span>` : `<button class="btn gold" data-action="buy" data-i="${(selected as { index: number }).index}">사기 (${u.cost}골드)</button>`}
+    ${owned ? `<button class="btn" data-action="sell">팔기 (+${owned.value}골드)</button>${g!.teams && partnerOf(g!, p) ? ` <button class="btn ghost" data-action="gift" ${p.giftRound === g!.round ? 'disabled' : ''}>🎁 짝꿍에게 보내기${p.giftRound === g!.round ? ' (이번 라운드 보냄)' : ''}</button>` : ''} <span class="sub">대기석·보드의 빈칸을 누르면 옮겨요</span>` : `<button class="btn gold" data-action="buy" data-i="${(selected as { index: number }).index}">사기 (${u.cost}골드)</button>`}
   </aside>`;
 }
 
@@ -424,7 +438,9 @@ function scoutsHtml(p: PlayerState) {
     const vs = q.id === vsId;
     const tag = vs ? `<em>${o?.kind === 'pvp' && o.mirror ? '거울 상대' : '이번 상대'}</em>` : '';
     const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : online?.bots.includes(q.id) ? '<small class="dtag">컴퓨터</small>' : q.remote && online ? tierBadge(online.points[q.id] ?? 0, true) : '';
-    return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
+    const team = g!.teams ? (g!.teams[q.id] === g!.teams[p.id] ? (q.id === p.id ? '' : 'mate') : 'foeteam') : '';
+    const cardsTag = q.cards?.length ? `<small class="ctag" title="마법 카드">${q.cards.map((c) => cardById(c)?.icon ?? '').join('')}</small>` : '';
+    return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''} ${team}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}${team === 'mate' ? ' 👯' : ''}</span>${diff}${cardsTag}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
   return `<div class="scouts" title="얼굴을 누르면 그 판을 구경해요">${items.join('')}</div><span class="sub hintlabel" style="color:var(--muted);flex:none">👀 눌러서 구경</span>`;
@@ -499,6 +515,7 @@ function modalHtml(): string {
       ${tutorialDoneLocal() || myRecord()?.tutorial
         ? '<p style="margin:6px 0"><button class="btn small ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>'
         : '<button class="choice tutbtn" data-action="tutorial"><b class="jua" style="font-size:22px">📖 처음이라면: 튜토리얼 한 판</b><br>하나쌤과 5라운드 <span class="nw">(약 7분)</span><br>규칙을 하나씩 해 보며 배워요</button>'}
+      <div class="rulebar">${ruleOfWeek().icon} <b>이번 주 규칙: ${esc(ruleOfWeek().name)}</b><span>${esc(ruleOfWeek().text)}</span></div>
       <div class="diffs"><span class="dl">컴퓨터 난이도</span>
         ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 겨뤄 봐요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
           .map(([d, nm, sub]) => `<button class="diff ${startDiff === d ? 'on' : ''}" data-action="diff" data-d="${d}"><b class="jua">${nm}</b><small>${sub}</small></button>`).join('')}
@@ -507,6 +524,7 @@ function modalHtml(): string {
         <button class="choice" data-action="start" data-bots="3" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 3명과</b><br>12라운드 <span class="nw">(약 12분)</span></button>
         <button class="choice" data-action="start" data-bots="1" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 1명과</b><br>12라운드</button>
         <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 <span class="nw">(약 8분)</span></button>
+        <button class="choice" data-action="start" data-bots="3" data-short="0" data-teams="1"><b class="jua" style="font-size:20px">👯 짝꿍 팀전</b><br>나 + 컴퓨터 짝꿍 <span class="nw">vs 컴퓨터 2명</span></button>
         ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
       <button class="choice onlinebtn" data-action="lobby"><b class="jua" style="font-size:22px">⚔️ 온라인 대결 (랭크)</b><br>친구와 2~4명이 동시에 · 등수대로 점수 · 브론즈 → 챌린저${getAuth() ? '' : '<br><small>들어가기를 하면 할 수 있어요</small>'}</button>
@@ -529,12 +547,22 @@ function modalHtml(): string {
       <div class="choices">${reward.options.map((opt, i) => `<button class="choice" data-action="reward" data-i="${i}">🎁<br>${opt.map((it) => `<div>${ITEM_NAME[it]}${isStoneItem(it) ? '' : `<small class="ihelp">${ITEM_HELP[it]}</small>`}</div>`).join('')}${reward.cardCost?.[i] ? `<div>${reward.cardCost[i]}골드 친구 1명</div>` : ''}</button>`).join('')}</div>
       <p class="sub" style="color:var(--muted)">받은 돌·보물은 가방에 들어가요. 가방에서 누르고 → 친구를 누르면 끼워요.</p></div></div>`;
   }
+  if (p.cardChoice?.length && g.phase === 'prep') {
+    return `<div class="modal"><div class="box"><h2>🃏 숫자 마법 카드</h2><p>${g.round}라운드 선물! 3장 중 1장을 골라요. 이번 판 내내 효과가 있어요.</p>
+      <div class="choices">${p.cardChoice.map((id, i) => {
+        const c = cardById(id)!;
+        return `<button class="choice mcard ${c.kind}" data-action="pickcard" data-i="${i}"><span class="mi">${c.icon}</span><b class="jua">${esc(c.name)}</b><span class="mt">${esc(c.text)}</span><small class="mk">${c.kind === 'econ' ? '💰 골드·상점' : c.fam ? '🏷 가문 문장' : '⚔️ 전투'}</small></button>`;
+      }).join('')}</div>
+      ${p.cards?.length ? `<p class="sub">가진 카드: ${p.cards.map((id) => `${cardById(id)?.icon} ${esc(cardById(id)?.name ?? '')}`).join(' · ')}</p>` : ''}</div></div>`;
+  }
   if (g.phase === 'over') {
     const r = ranking(g);
     const mine = p;
+    const tt = g.teams ? teamTotals(g) : null;
+    const myTeam = g.teams ? (g.teams[p.id] as 0 | 1) : 0;
     const best = Math.max(0, ...mine.history.map((h) => h.medals));
     return `<div class="modal"><div class="box"><h2>게임 끝!</h2>
-      <div class="hl">👑 1등: <b>${esc(r[0].name)}</b></div>
+      ${tt ? `<div class="hl teamend ${tt[myTeam] > tt[1 - myTeam] ? 'win' : tt[myTeam] < tt[1 - myTeam] ? 'loss' : ''}">👯 ${tt[myTeam] > tt[1 - myTeam] ? '우리 팀 승리!' : tt[myTeam] < tt[1 - myTeam] ? '아쉽게 졌어요' : '비겼어요'} <b class="jua">${tt[myTeam]} : ${tt[1 - myTeam]}</b><br><small>짝꿍: ${esc(partnerOf(g, p)?.name ?? '')}</small></div>` : `<div class="hl">👑 1등: <b>${esc(r[0].name)}</b></div>`}
       <div class="hl">내 메달 <b class="jua" style="font-size:22px">${mine.medals}개</b> · 이긴 판 ${mine.wins}번 · 한 라운드 최고 메달 ${best}개</div>
       ${bestChorus ? `<div class="hl tip">🔎 오늘의 수학 발견: ${bestChorus.round}라운드 <b>${bestChorus.beat}박</b>에 ${josa([...bestChorus.nums].sort((a, b) => a - b).join('·'), '이/가')} 함께 노래했어요 — 모두 ${bestChorus.beat}의 약수! <span class="sub">(${bestChorus.beat}의 약수: ${divisors(bestChorus.beat).join(', ')})</span></div>` : ''}
       ${online?.final ? onlineFinalHtml(online.final) : ''}
@@ -580,7 +608,7 @@ function render() {
   }
   const p = me();
   const plan = currentPlan(g);
-  const inc = income(p);
+  const inc = income(p, g);
   const syn = synPanels(p);
   const odds = SHOP_ODDS[p.level].map((x, i) => (x ? `<span class="nw">${i + 1}골드 ${x}%</span>` : '')).filter(Boolean).join(' · ');
   const need = ECON.xpToNext[p.level];
@@ -602,11 +630,18 @@ function render() {
       <div class="round"><b class="jua" style="font-size:20px">${g.round}라운드</b> <span class="sub of" style="color:var(--muted)">(${g.rounds.length}라운드까지)</span>
         <span class="tag ${plan.kind}">${plan.kind === 'pve' ? '몬스터' : '친구 대결'}</span></div>
       <div class="stat">🏅<span class="big">${p.medals}</span><small>메달</small></div>
+      ${g.teams ? (() => {
+        const tt = teamTotals(g);
+        const mine = g.teams[p.id] as 0 | 1;
+        return `<div class="stat teamscore" title="짝꿍 팀전: 팀 메달 합">👯<b class="jua ${tt[mine] >= tt[1 - mine] ? 'win' : 'loss'}">${tt[mine]}</b><small>: ${tt[1 - mine]}</small></div>`;
+      })() : ''}
       <div class="stat">🪙<span class="big" style="color:var(--gold)">${p.gold}</span><small class="inc">다음 수입 = ${inc.base} + 저금 ${inc.interest}${inc.streak ? ` + ${p.winStreak >= 2 ? '연승' : '연패'} ${inc.streak}` : ''} = ${inc.total}</small><small class="inc-m">다음 +${inc.total}</small></div>
       <div class="lv"><b class="jua" style="font-size:18px">레벨 ${p.level}</b>
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
-        <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (4골드)</button>` : '<small>최고 레벨</small>'}</div>
+        <button class="btn small" data-action="xp" ${p.gold < xpCostOf(p) ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (${xpCostOf(p)}골드)</button>` : '<small>최고 레벨</small>'}</div>
       ${online?.playing ? '<button class="btn small ghost emob" data-action="emotes" title="감정 스티커">😀</button>' : ''}
+      ${ruleById(g.rule) ? `<button class="tag rulechip" data-action="rule" title="이번 주 규칙">${ruleById(g.rule)!.icon}<span class="rn"> ${ruleById(g.rule)!.name}</span></button>` : ''}
+      ${p.cards?.length ? `<button class="btn small ghost cardsb" data-action="cards" title="내 숫자 마법 카드">🃏 ${p.cards.map((c) => cardById(c)?.icon ?? '').join('')}</button>` : ''}
       <button class="btn small ghost nb" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘<span class="nbt"> 수첩</span></button>
       ${online?.playing && g.phase !== 'over' ? `<span class="otimer nc-timer">${fmtLeft(online.deadline - Date.now())}</span>` : ''}
       ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : onlineLocked() ? `<span class="ready tag waiting">⏳ 기다리는 중 ${online!.readyN}/${online!.readyOf || g.players.length}<small class="nc-timer mt">${fmtLeft(online!.deadline - Date.now())}</small></span>` : `<button class="btn gold ready" data-action="ready">준비 완료 ▶${online?.playing ? `<small class="nc-timer mt">${fmtLeft(online.deadline - Date.now())}</small>` : ''}</button>`}
@@ -620,7 +655,7 @@ function render() {
       <div class="panel"><div class="cards">${p.shop.map((_, i) => shopCard(p, i)).join('')}</div></div>
       <div class="panel side">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn" data-action="reroll" ${p.gold < ECON.rerollCost ? 'disabled' : ''}>새로고침 (2골드)</button>
+          <button class="btn" data-action="reroll" ${p.gold < rerollCostOf(g, p) ? 'disabled' : ''}>새로고침 (${rerollCostOf(g, p) ? `${rerollCostOf(g, p)}골드` : '공짜!'})</button>
           <button class="btn ${p.shopLocked ? 'on' : 'ghost'}" data-action="lock">${p.shopLocked ? '🔒 잠김' : '🔓 잠금'}</button>
         </div>
         <div class="odds">레벨 ${p.level} 상점: ${odds}</div>
@@ -666,10 +701,10 @@ function check(r: { ok: boolean; reason?: string }) {
   return r.ok;
 }
 
-function newGame(bots: number, short: boolean) {
+function newGame(bots: number, short: boolean, teams = false) {
   const mix: Difficulty[] = ['easy', 'normal', 'hard'];
   const difficulties = Array.from({ length: bots }, (_, i) => (startDiff === 'mix' ? mix[i % 3] : startDiff));
-  g = createGame({ seed: (Date.now() ^ (Math.random() * 1e9)) >>> 0, bots, short, difficulties });
+  g = createGame({ seed: (Date.now() ^ (Math.random() * 1e9)) >>> 0, bots, short, difficulties, rule: ruleOfWeek().id, teams });
   resetRun();
   for (const p of g.players) if (p.isBot) botFreePick(g, p);
 }
@@ -758,7 +793,7 @@ app.addEventListener('click', (ev) => {
     return render();
   }
   if (a === 'start') {
-    newGame(Number(el.dataset.bots), el.dataset.short === '1');
+    newGame(Number(el.dataset.bots), el.dataset.short === '1', el.dataset.teams === '1');
     return render();
   }
   if (a === 'tutorial') {
@@ -801,6 +836,10 @@ app.addEventListener('click', (ev) => {
   }
   if (a === 'fill') {
     online?.conn.send({ t: 'fill', on: el.dataset.on === '1' });
+    return;
+  }
+  if (a === 'teams') {
+    online?.conn.send({ t: 'teams', on: el.dataset.on === '1' });
     return;
   }
   if (a === 'emote') {
@@ -863,6 +902,31 @@ app.addEventListener('click', (ev) => {
   }
   const selBefore = JSON.stringify(selected);
   switch (a) {
+    case 'cards':
+      selected = selected?.kind === 'cards' ? null : { kind: 'cards' };
+      break;
+    case 'rule':
+      selected = selected?.kind === 'rule' ? null : { kind: 'rule' };
+      break;
+    case 'pickcard':
+      check(chooseCard(g, p, Number(el.dataset.i)));
+      break;
+    case 'gift':
+      if (selected?.kind === 'unit') {
+        const f = findUnit(p, selected.uid);
+        const mate = partnerOf(g, p);
+        if (f && mate) {
+          if (online?.playing && mate.remote) {
+            const r = takeForGift(g, p, f.unit.uid);
+            if (check(r) && r.unit) {
+              online.conn.send({ t: 'gift', to: mate.id, unit: { char: r.unit.char, star: r.unit.star, items: r.unit.items } });
+              toast(`${josa(UNITS[r.unit.char].name, '을/를')} 짝꿍에게 보냈어요 🎁`);
+            }
+          } else if (check(giftUnit(g, p, f.unit.uid))) toast(`${josa(UNITS[f.unit.char].name, '을/를')} 짝꿍에게 보냈어요 🎁`);
+          selected = null;
+        }
+      }
+      break;
     case 'syn': {
       const key = el.dataset.key!;
       selected = selected?.kind === 'syn' && selected.key === key ? null : { kind: 'syn', key };
@@ -1223,6 +1287,13 @@ function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
     case 'emote':
       showEmote(m.nick, m.id, m.seat === o.you);
       return;
+    case 'gift':
+      // 짝꿍이 보낸 친구(내 자리 또는 내가 대신 두는 컴퓨터 짝꿍)
+      if (g && (m.to === meIdx || g.players[m.to]?.isBot) && UNITS[m.unit.char]) {
+        receiveGift(g, g.players[m.to], { char: m.unit.char, star: m.unit.star, items: m.unit.items as BagItem[] });
+        if (m.to === meIdx) toast(`짝꿍이 ${josa(UNITS[m.unit.char].name, '을/를')} 보냈어요 🎁`);
+      }
+      break;
     case 'notice':
       toast(m.text);
       break;
@@ -1302,7 +1373,10 @@ function startOnline(o: NonNullable<typeof online>, m: Extract<ServerMsg, { t: '
   o.ranked = m.ranked;
   o.readyOf = m.names.length - m.bots.length;
   // 빈자리 컴퓨터는 방장 기기가 대신 둠(보통)
-  g = createOnlineGame({ seed: m.seed, short: m.short, names: m.names.map((n, i) => (i === m.you ? '나' : n)), mySeat: m.you, bots: m.you === m.driver ? m.bots : [] });
+  g = createOnlineGame({
+    seed: m.seed, short: m.short, names: m.names.map((n, i) => (i === m.you ? '나' : n)), mySeat: m.you,
+    bots: m.you === m.driver ? m.bots : [], rule: m.rule, teams: m.teams,
+  });
   meIdx = m.you;
   g.monsterIndex = m.monsterIndex;
   for (const p of g.players) if (p.isBot) botFreePick(g, p);
@@ -1324,8 +1398,17 @@ function onlineReady() {
   autoFill(me());
   prepBots();
   const bots: Record<number, BoardUnit[]> = {};
-  for (const q of g.players) if (q.isBot) bots[q.id] = cleanBoard(toBattleBoard(q));
-  const msg: ClientMsg = { t: 'ready', round: g.round, board: cleanBoard(toBattleBoard(me())), ...(Object.keys(bots).length ? { bots } : {}) };
+  const botCards: Record<number, string[]> = {};
+  for (const q of g.players) {
+    if (!q.isBot) continue;
+    bots[q.id] = cleanBoard(toBattleBoard(q));
+    botCards[q.id] = q.cards ?? [];
+  }
+  if (me().cardChoice?.length) chooseCard(g, me(), 0); // 시간이 다 되면 첫 카드
+  const msg: ClientMsg = {
+    t: 'ready', round: g.round, board: cleanBoard(toBattleBoard(me())), cards: me().cards ?? [],
+    ...(Object.keys(bots).length ? { bots, botCards } : {}),
+  };
   o.lastReady = msg;
   o.submitted = true;
   selected = null;
@@ -1344,7 +1427,7 @@ function pumpOnline() {
   if (g.phase === 'freePick') chooseFreePick(g, me(), 0);
   o.applied.add(m.round);
   // 서버와 같은 보드·짝으로 이 기기에서도 똑같이 계산(전투 장면을 보여 주려고)
-  const outcome = resolveRound(g, { boards: m.boards, pairs: m.pairs });
+  const outcome = resolveRound(g, { boards: m.boards, pairs: m.pairs, cards: m.cards });
   m.medals.forEach((v, i) => {
     if (g!.players[i]) g!.players[i].medals = v;
   });
@@ -1352,7 +1435,10 @@ function pumpOnline() {
   botRewards(g); // 방장 기기의 컴퓨터
   if (!g.pendingRewards.length) g.phase = 'prep';
   g.players.forEach((q, i) => {
-    if (q.remote) setBoardFrom(g!, q, m.boards[i] ?? []);
+    if (q.remote) {
+      setBoardFrom(g!, q, m.boards[i] ?? []);
+      q.cards = m.cards?.[i] ?? q.cards; // 구경할 때 상대 마법 카드도 보이게
+    }
   });
   o.nextMonster = m.next?.monsterIndex ?? null;
   o.deadline = m.next ? Date.now() + m.next.remainMs : 0;
@@ -1439,9 +1525,11 @@ function roomHtml(): string {
     ${auto}
     ${host
       ? `<div class="lobbybtns"><button class="btn gold bigbtn" data-action="startroom" ${humans < 2 ? 'disabled' : ''}>▶ 지금 시작 (${humans}명${r.fill && humans < r.size ? ` + 컴퓨터 ${r.size - humans}` : ''})</button>
-         <button class="btn ${r.fill ? 'on' : 'ghost'}" data-action="fill" data-on="${r.fill ? 0 : 1}">🤖 빈자리 컴퓨터 ${r.fill ? '켜짐' : '꺼짐'}</button></div>${humans < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
+         <button class="btn ${r.fill ? 'on' : 'ghost'}" data-action="fill" data-on="${r.fill ? 0 : 1}">🤖 빈자리 컴퓨터 ${r.fill ? '켜짐' : '꺼짐'}</button>
+         <button class="btn ${r.teams ? 'on' : 'ghost'}" data-action="teams" data-on="${r.teams ? 0 : 1}">👯 짝꿍 팀전 ${r.teams ? '켜짐' : '꺼짐'}</button></div>${humans < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
       : '<div class="hl">방장이 시작하거나 자동 시작을 기다려요…</div>'}
-    <p class="sub">점수는 사람끼리 등수로: ${placePointsText(Math.max(2, humans))}${r.fill ? ' · 컴퓨터는 점수 없음' : ''}</p>
+    ${r.teams ? `<div class="hl">👯 짝꿍 팀전: 2명씩 팀이 되어 팀 메달 합으로 겨뤄요. 둘 다 이긴 라운드는 메달 +1, 라운드마다 짝꿍에게 친구 1명을 보낼 수 있어요. ${humans === 2 ? '(2명이면 서로 다른 팀, 짝꿍은 컴퓨터)' : ''}</div>` : ''}
+    <p class="sub">점수는 사람끼리 등수로: ${r.teams ? '이긴 팀 +60 · 진 팀 −10' : placePointsText(Math.max(2, humans))}${r.fill ? ' · 컴퓨터는 점수 없음' : ''}</p>
     ${emoteRow()}
     <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>
   </div></div>`;
@@ -1518,6 +1606,10 @@ function notebookHtml(): string {
       <dt>가문</dt><dd>${fams.length ? fams.map((f) => `${famIcon(f, 14)}${FAMILIES[f].name}`).join(' ') : '없음'}</dd>
       <dt>노래하는 박</dt><dd>${mult.join('·')}${mult.length ? '박' : ''} <small class="sub">(${n}의 배수)</small></dd>
       ${who.length ? `<dt>함께 노래</dt><dd>${n}박에 ${who.join('·')} <small class="sub">(${n}의 약수)</small></dd>` : ''}</dl></div>
+    <h3 class="jua">📅 이번 주 규칙 · 🃏 숫자 마법 카드</h3>
+    <div class="hl">${ruleOfWeek().icon} <b>${esc(ruleOfWeek().name)}</b> — ${esc(ruleOfWeek().text)}</div>
+    <details><summary>숫자 마법 카드 ${MAGIC_CARDS.length}장 모두 보기 (${'12라운드 판은 3·6·9라운드, 짧은 판은 2·5라운드에 3장 중 1장'})</summary>
+      <div class="nbgrid">${MAGIC_CARDS.map((c) => `<div class="mcard mini ${c.kind}"><span class="mi">${c.icon}</span><span><b>${esc(c.name)}</b><br><small>${esc(c.text)}</small></span></div>`).join('')}</div></details>
     <h3 class="jua">처음 보는 순간 말풍선 (${seen.length}/${Object.keys(TIPS).length})</h3>
     <div class="nbtips">${Object.entries(TIPS).map(([id, t]) => (seen.includes(id) ? `<div><b>${esc(t.title)}</b> — ${esc(t.text)}</div>` : '<div class="locked">??? 아직 못 본 말풍선</div>')).join('')}</div>
     <p style="margin-top:10px"><button class="btn ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>

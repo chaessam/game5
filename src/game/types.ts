@@ -35,6 +35,14 @@ export interface PlayerState {
   ai?: BotMemory;
   /** 온라인 대결: 다른 기기에서 두는 친구(보드는 서버가 라운드마다 알려 줌, 상점·보상 없음) */
   remote?: boolean;
+  /** 숫자 마법 카드(고른 순서) */
+  cards?: string[];
+  /** 지금 고를 마법 카드 3장 */
+  cardChoice?: string[];
+  /** '공짜 새로고침'을 쓴 라운드 */
+  freeRollRound?: number;
+  /** 짝꿍에게 친구를 보낸 라운드 */
+  giftRound?: number;
   /** 친구 유령: 라운드별 보드(같은 학교 친구가 실제로 둔 판). 있으면 상점 대신 이 판으로 싸운다 */
   ghost?: import('../engine/types').BoardUnit[][];
   gold: number;
@@ -99,6 +107,10 @@ export interface GameState {
   pendingRewards: PendingReward[];
   /** 이번 라운드 몬스터(라운드 시작에 시드로 고름) */
   monsterIndex: number;
+  /** 이번 주 규칙(시작할 때 정함) */
+  rule?: string | null;
+  /** 짝꿍 팀전: 자리마다 팀 번호(0·1). 없으면 각자 */
+  teams?: number[];
   /** 튜토리얼: 라운드마다 정해 둔 몬스터 */
   monsters?: Record<number, { name: string; board: import('../engine/types').BoardUnit[] }>;
   log: string[];

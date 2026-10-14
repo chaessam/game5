@@ -6,6 +6,8 @@ import type { BoardUnit } from '../src/engine/types';
 import { advance, createOnlineGame, currentPlan, deserializeGame, pairings, ranking, resolveRound, serializeGame } from '../src/game/game';
 import type { GameState } from '../src/game/types';
 import { cleanBoard, validBoard } from '../src/shared/board';
+import { ruleOfWeek, validCards } from '../src/game/magic';
+import { UNITS } from '../src/engine/data';
 import {
   EMOTES, ONLINE, ONLINE_BOT_NAMES,
   type ClientMsg, type FinalPlace, type RoomInfo, type RoomStatus, type RoundMsg, type ServerMsg,
@@ -26,6 +28,14 @@ interface RoomState {
   seats: Seat[];
   /** 빈자리 컴퓨터로 채우기 */
   fill: boolean;
+  /** 짝꿍 팀전 2:2 */
+  teams?: boolean;
+  /** 이번 주 규칙(시작할 때 정함) */
+  rule?: string | null;
+  /** 자리마다 숫자 마법 카드(가장 최근에 받은 것) */
+  cards?: string[][];
+  /** 자리마다 짝꿍에게 친구를 보낸 라운드 */
+  gifts?: number[];
   /** 자동 시작 시각 */
   autoAt: number | null;
   seed: number;
@@ -99,7 +109,7 @@ export class Room extends DurableObject<Env> {
   info(): RoomInfo {
     const st = this.st!;
     return {
-      id: st.id, short: st.short, size: st.size, status: st.status, host: st.host, fill: st.fill,
+      id: st.id, short: st.short, size: st.size, status: st.status, host: st.host, fill: st.fill, teams: !!st.teams,
       autoInMs: st.status === 'wait' && st.autoAt ? Math.max(0, st.autoAt - Date.now()) : null,
       seats: st.seats.map((s, i) => ({
         nick: s.nick, schoolName: s.schoolName, points: s.points, online: s.bot ? true : this.online(i) && !s.left,
@@ -216,14 +226,43 @@ export class Room extends DurableObject<Env> {
           this.sendRoom();
         }
         break;
+      case 'teams':
+        if (st.status === 'wait' && seat === st.host) {
+          st.teams = !!m.on;
+          if (st.teams) st.fill = true; // 팀전은 4자리가 꼭 차야 함
+          await this.save();
+          this.sendRoom();
+        }
+        break;
+      case 'gift': {
+        // 짝꿍에게 친구 보내기: 같은 팀, 라운드마다 1번. 저장 없이 받는 사람(컴퓨터 짝꿍이면 방장)에게만 전달
+        if (st.status !== 'play' || !st.teams) return;
+        const to = Number(m.to);
+        const g = deserializeGame(st.game);
+        if (!g.teams || to === seat || g.teams[to] !== g.teams[seat]) return;
+        st.gifts ??= [];
+        if (st.gifts[seat] === st.round) return;
+        const u = m.unit;
+        if (!u || !UNITS[u.char] || ![1, 2, 3].includes(u.star) || !Array.isArray(u.items) || u.items.length > 2) return;
+        st.gifts[seat] = st.round;
+        await this.save();
+        const target = st.seats[to]?.bot ? st.driver : to;
+        for (const w of this.open()) if (this.seatOf(w) === target) this.send(w, { t: 'gift', from: seat, to, unit: { char: u.char, star: u.star, items: u.items.slice(0, 2) } });
+        break;
+      }
       case 'ready': {
         if (st.status !== 'play' || m.round !== st.round || !validBoard(m.board)) return;
         st.boards[seat] = cleanBoard(m.board);
+        const total = st.short ? 8 : 12;
+        st.cards ??= st.seats.map(() => []);
+        if (validCards(m.cards ?? [], st.round, total)) st.cards[seat] = m.cards ?? [];
         // 방장이 컴퓨터 보드도 함께 보냄
         if (seat === st.driver && m.bots && typeof m.bots === 'object') {
           for (const b of st.bots) {
             const board = (m.bots as Record<number, unknown>)[b];
             if (validBoard(board)) st.boards[b] = cleanBoard(board);
+            const bc = (m.botCards as Record<number, unknown> | undefined)?.[b];
+            if (validCards(bc ?? [], st.round, total)) st.cards[b] = (bc as string[]) ?? [];
           }
         }
         await this.save();
@@ -299,16 +338,25 @@ export class Room extends DurableObject<Env> {
     st.host = 0;
     st.ranked = keep.length >= 2;
     st.bots = [];
-    if (st.fill) {
+    const bot = (k: number): Seat => ({ school: '', nick: ONLINE_BOT_NAMES[k], schoolName: '', points: 0, teacher: false, bot: true });
+    if (st.teams) {
+      // 팀전: 0·1번 자리 대 2·3번 자리. 사람이 2명이면 서로 다른 팀(짝꿍은 컴퓨터)
+      const h = keep;
+      st.seats = h.length === 2 ? [h[0], bot(0), h[1], bot(1)] : h.length === 3 ? [h[0], h[1], h[2], bot(0)] : h.slice(0, 4);
+      st.seats.forEach((s, i) => s.bot && st.bots.push(i));
+    } else if (st.fill) {
       while (st.seats.length < ONLINE.maxPlayers) {
         st.bots.push(st.seats.length);
-        st.seats.push({ school: '', nick: ONLINE_BOT_NAMES[st.bots.length - 1], schoolName: '', points: 0, teacher: false, bot: true });
+        st.seats.push(bot(st.bots.length - 1));
       }
     }
+    st.rule = ruleOfWeek().id;
+    st.cards = st.seats.map(() => []);
+    st.gifts = [];
     st.driver = 0;
     st.autoAt = null;
     st.seed = (Math.random() * 2 ** 31) >>> 0;
-    const g = createOnlineGame({ seed: st.seed, short: st.short, names: st.seats.map((s) => s.nick), mySeat: -1 });
+    const g = createOnlineGame({ seed: st.seed, short: st.short, names: st.seats.map((s) => s.nick), mySeat: -1, rule: st.rule, teams: !!st.teams });
     st.game = serializeGame(g);
     st.status = 'play';
     st.round = g.round;
@@ -323,7 +371,7 @@ export class Room extends DurableObject<Env> {
     const points = st.seats.map((s) => s.points);
     this.broadcast((you) => ({
       t: 'start', seed: st.seed, short: st.short, names, points, you, monsterIndex: g.monsterIndex, remainMs: ONLINE.firstPrepMs,
-      bots: st.bots, driver: st.driver, ranked: st.ranked,
+      bots: st.bots, driver: st.driver, ranked: st.ranked, rule: st.rule ?? null, teams: !!st.teams,
     }));
   }
 
@@ -335,13 +383,14 @@ export class Room extends DurableObject<Env> {
     const boards = st.seats.map((_, i) => st.boards[i] ?? st.last[i] ?? []);
     const pairs = currentPlan(g).kind === 'pvp' ? pairings(g) : undefined;
     const round = g.round;
-    resolveRound(g, { boards, light: true });
+    const cards = st.seats.map((_, i) => st.cards?.[i] ?? []);
+    resolveRound(g, { boards, cards, light: true });
     g.pendingRewards = [];
     advance(g);
     st.last = boards;
     st.boards = [];
     const over = g.phase === 'over';
-    const msg: RoundMsg = { t: 'round', round, boards, pairs, medals: g.players.map((p) => p.medals), next: over ? null : { monsterIndex: g.monsterIndex, remainMs: ONLINE.prepMs } };
+    const msg: RoundMsg = { t: 'round', round, boards, pairs, cards, medals: g.players.map((p) => p.medals), next: over ? null : { monsterIndex: g.monsterIndex, remainMs: ONLINE.prepMs } };
     if (over) {
       st.status = 'done';
       msg.final = await this.finish(g);
@@ -364,9 +413,16 @@ export class Room extends DurableObject<Env> {
     const order = ranking(g);
     const people = order.filter((p) => !st.seats[p.id].bot);
     let ranks: { before: number; after: number; delta: number }[] | null = null;
-    if (st.ranked && people.length >= 2) {
+    // 팀전: 이긴 팀 사람은 1등, 진 팀 사람은 2등(2명 표). 두 팀에 모두 사람이 있을 때만 점수
+    const teamOf = (id: number) => g.teams?.[id] ?? 0;
+    const winTeam = g.teams ? teamOf(order[0].id) : 0;
+    const bothTeams = !g.teams || new Set(people.map((p) => teamOf(p.id))).size === 2;
+    if (st.ranked && people.length >= 2 && bothTeams) {
       try {
-        ranks = await this.store().applyRanks(people.map((p, i) => ({ school: st.seats[p.id].school, nick: st.seats[p.id].nick, place: i + 1, players: people.length })));
+        ranks = await this.store().applyRanks(people.map((p, i) => ({
+          school: st.seats[p.id].school, nick: st.seats[p.id].nick,
+          place: g.teams ? (teamOf(p.id) === winTeam ? 1 : 2) : i + 1, players: g.teams ? 2 : people.length,
+        })));
       } catch {
         ranks = null; // 한도가 찼으면 점수만 못 남김
       }

@@ -56,6 +56,8 @@ export interface RoomInfo {
   seats: SeatInfo[];
   /** 빈자리 컴퓨터로 채우기 */
   fill: boolean;
+  /** 짝꿍 팀전 2:2 */
+  teams: boolean;
   /** 자동 시작까지 남은 시간(없으면 null) */
   autoInMs: number | null;
 }
@@ -76,6 +78,8 @@ export interface RoundMsg {
   /** 자리마다 이번 라운드에 싸운 보드(못 낸 친구는 지난 보드) */
   boards: BoardUnit[][];
   pairs?: Pair[];
+  /** 자리마다 숫자 마법 카드(전투 효과 계산에 씀) */
+  cards: string[][];
   medals: number[];
   next: { monsterIndex: number; remainMs: number } | null;
   /** 마지막 라운드: 등수와 랭크 점수 */
@@ -90,21 +94,34 @@ export type ServerMsg =
       bots: number[]; driver: number;
       /** 사람이 2명 이상이라 점수가 걸린 판 */
       ranked: boolean;
+      /** 이번 주 규칙 · 짝꿍 팀전 */
+      rule: string | null;
+      teams: boolean;
     }
   | { t: 'ready'; round: number; n: number; of: number }
   | RoundMsg
   | { t: 'state'; round: number; remainMs: number; submitted: boolean }
   | { t: 'error'; code: string; error: string }
   | { t: 'emote'; seat: number; nick: string; id: number }
-  | { t: 'notice'; text: string };
+  | { t: 'notice'; text: string }
+  /** 짝꿍이 보낸 친구 */
+  | { t: 'gift'; from: number; to: number; unit: GiftUnit };
 
 export type ClientMsg =
   | { t: 'hello'; round: number }
   | { t: 'start' }
-  | { t: 'ready'; round: number; board: BoardUnit[]; bots?: Record<number, BoardUnit[]> }
+  | { t: 'ready'; round: number; board: BoardUnit[]; cards?: string[]; bots?: Record<number, BoardUnit[]>; botCards?: Record<number, string[]> }
+  | { t: 'gift'; to: number; unit: GiftUnit }
+  | { t: 'teams'; on: boolean }
   | { t: 'leave' }
   | { t: 'emote'; id: number }
   | { t: 'fill'; on: boolean };
+
+export interface GiftUnit {
+  char: number;
+  star: 1 | 2 | 3;
+  items: string[];
+}
 
 export interface LobbyRoom {
   id: string;

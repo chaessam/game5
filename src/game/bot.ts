@@ -13,8 +13,9 @@ import { placements } from '../sim/arena';
 import { ECON } from './economy';
 import {
   allUnits, buy, buyXp, cellKey, chooseFreePick, chooseReward, lastRound, opponentOf, ownedCount, rand, reroll, sell,
-  setBoardFrom, toBattleBoard,
+  setBoardFrom, toBattleBoard, chooseCard,
 } from './game';
+import { cardById } from './magic';
 import { FAM_ORDER, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, planEquip, slotCount, synergyOf } from './items';
 import type { BagItem, GameState, PlayerState, UnitInst } from './types';
 
@@ -421,7 +422,35 @@ function ghostPrep(g: GameState, p: PlayerState) {
   p.ai = { ...(p.ai ?? {}), keepEmpty: true };
 }
 
+/** 숫자 마법 카드 고르기: 쉬움은 아무거나, 보통·어려움은 라운드·목표 가문에 맞게 */
+export function botCard(g: GameState, p: PlayerState) {
+  const opts = p.cardChoice;
+  if (!opts?.length) return;
+  if (p.difficulty === 'easy') {
+    chooseCard(g, p, Math.floor(rand(g) * opts.length));
+    return;
+  }
+  const early = g.round <= 3;
+  const syn = synergyOf([...p.board.values()]);
+  const score = (id: string) => {
+    const c = cardById(id);
+    if (!c) return 0;
+    if (c.fam) return (p.ai?.fam === c.fam ? 9 : 0) + Math.min(6, syn.fam[c.fam].count * 2);
+    const base: Record<string, number> = {
+      gold: early ? 7 : 4, gift: early ? 6 : 3, xp: early ? 6 : 2, reroll: early ? 5 : 3, piggy: early ? 6 : 1, stones: 4, mic: 4,
+      baton: 7, hand: 5, shield: 5, hp: 6, atk: 5, late: 4, big: 4, lone: 3,
+    };
+    return base[id] ?? 3;
+  };
+  let best = 0;
+  opts.forEach((id, i) => {
+    if (score(id) > score(opts[best])) best = i;
+  });
+  chooseCard(g, p, best);
+}
+
 export function botPrep(g: GameState, p: PlayerState) {
+  if (p.cardChoice) botCard(g, p);
   if (p.ghost) ghostPrep(g, p);
   else if (p.difficulty === 'hard') hardPrep(g, p);
   else if (p.difficulty === 'normal') normalPrep(g, p);

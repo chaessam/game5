@@ -17,9 +17,12 @@ for (const a of args.filter((x) => x.startsWith('--set'))) {
 }
 const N = Number(args.find((a) => /^\d+$/.test(a)) ?? 60);
 const short = args.includes('--short');
+// --rule=chorus : 이번 주 규칙을 켜고 잰다
+const rule = args.find((a) => a.startsWith('--rule='))?.slice(7) ?? null;
+if (rule) console.log(`이번 주 규칙: ${rule}`);
 
 function play(seed: number, diffs: Difficulty[]): GameState {
-  const g = createGame({ seed, bots: diffs.length - 1, difficulties: diffs.slice(1), seatZeroBot: diffs[0], short });
+  const g = createGame({ seed, bots: diffs.length - 1, difficulties: diffs.slice(1), seatZeroBot: diffs[0], short, rule });
   for (const p of g.players) botFreePick(g, p);
   let guard = 0;
   while (g.phase !== 'over' && guard++ < 40) {
@@ -36,6 +39,46 @@ function play(seed: number, diffs: Difficulty[]): GameState {
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 const t0 = Date.now();
 
+// --magic: 어려움 4명이 마법 카드를 '아무거나' 고르게 해서 카드마다 평균 순위를 잰다(2.5가 보통)
+if (args.includes('--magic')) {
+  const { MAGIC_CARDS } = await import('../src/game/magic');
+  const { chooseCard } = await import('../src/game/game');
+  const st = new Map<string, { rank: number; n: number; first: number }>(MAGIC_CARDS.map((c) => [c.id, { rank: 0, n: 0, first: 0 }]));
+  let seedRng = 7;
+  const rnd = () => ((seedRng = (seedRng * 1103515245 + 12345) >>> 0) / 4294967296);
+  for (let i = 0; i < N; i++) {
+    const g = createGame({ seed: 50000 + i, bots: 3, difficulties: ['hard', 'hard', 'hard'], seatZeroBot: 'hard', short, rule });
+    for (const p of g.players) botFreePick(g, p);
+    let guard = 0;
+    while (g.phase !== 'over' && guard++ < 40) {
+      if (g.phase === 'prep') {
+        for (const p of g.players) {
+          if (p.cardChoice) chooseCard(g, p, Math.floor(rnd() * p.cardChoice.length));
+          botPrep(g, p);
+        }
+        resolveRound(g);
+      }
+      botRewards(g);
+      advance(g);
+    }
+    ranking(g).forEach((p, idx) => {
+      for (const c of p.cards ?? []) {
+        const s = st.get(c)!;
+        s.rank += idx + 1;
+        s.n++;
+        if (idx === 0) s.first++;
+      }
+    });
+  }
+  console.log(`\n## 마법 카드별 평균 순위 (어려움 4명, ${N}판, 카드는 아무거나 고름 — 2.5가 보통, 낮을수록 셈)`);
+  [...st.entries()].sort((a, b) => a[1].rank / (a[1].n || 1) - b[1].rank / (b[1].n || 1)).forEach(([id, s]) => {
+    const c = MAGIC_CARDS.find((x) => x.id === id)!;
+    console.log(`${(s.rank / (s.n || 1)).toFixed(2)}  1등 ${pct(s.first / (s.n || 1)).padStart(4)}  (${String(s.n).padStart(3)}번)  ${c.icon} ${c.name}`);
+  });
+  console.log(`(${((Date.now() - t0) / 1000).toFixed(0)}초)`);
+  process.exit(0);
+}
+
 // --decks: 어려움 4명에게 덱을 하나씩 고정해 실제 경제 속 덱 세기를 잰다(중반 밸런스)
 if (args.includes('--decks')) {
   const { META_DECKS } = await import('../src/sim/decks');
@@ -45,7 +88,7 @@ if (args.includes('--decks')) {
     const R = (k: number) => names[(i * 5 + k * 3 + Math.floor(i / names.length)) % names.length];
     const pickNames: string[] = [];
     for (let k = 0; pickNames.length < 4; k++) if (!pickNames.includes(R(k))) pickNames.push(R(k));
-    const g = createGame({ seed: 20000 + i, bots: 3, difficulties: ['hard', 'hard', 'hard'], seatZeroBot: 'hard', short });
+    const g = createGame({ seed: 20000 + i, bots: 3, difficulties: ['hard', 'hard', 'hard'], seatZeroBot: 'hard', short, rule });
     g.players.forEach((p, k) => (p.ai = { deck: pickNames[k], lockDeck: true }));
     for (const p of g.players) botFreePick(g, p);
     let guard = 0;

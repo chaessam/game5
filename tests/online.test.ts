@@ -24,12 +24,13 @@ function simulate(n: number, short: boolean, seed: number) {
       autoFill(p);
       return toBattleBoard(p);
     });
+    const cards = clients.map((c, i) => c.players[i].cards ?? []);
     const pairs = currentPlan(server).kind === 'pvp' ? pairings(server) : undefined;
-    resolveRound(server, { boards, light: true });
+    resolveRound(server, { boards, cards, light: true });
     server.pendingRewards = [];
     advance(server);
     clients.forEach((c, i) => {
-      resolveRound(c, { boards, pairs });
+      resolveRound(c, { boards, pairs, cards });
       c.pendingRewards = c.pendingRewards.filter((r) => !c.players[r.playerId].remote);
       if (c.pendingRewards.length) chooseReward(c, i, 0);
       advance(c);
@@ -73,12 +74,13 @@ describe('온라인 대결: 빈자리 컴퓨터(방장 기기)', () => {
         autoFill(p);
         return toBattleBoard(p);
       });
+      const cards = [0, 1, 2, 3].map((i) => (i === 1 ? other : host).players[i].cards ?? []);
       const pairs = currentPlan(server).kind === 'pvp' ? pairings(server) : undefined;
-      resolveRound(server, { boards, light: true });
+      resolveRound(server, { boards, cards, light: true });
       server.pendingRewards = [];
       advance(server);
       for (const [c, mine] of [[host, 0], [other, 1]] as const) {
-        resolveRound(c, { boards, pairs });
+        resolveRound(c, { boards, pairs, cards });
         c.pendingRewards = c.pendingRewards.filter((r) => !c.players[r.playerId].remote);
         botRewards(c);
         if (c.pendingRewards.length) chooseReward(c, mine, 0);

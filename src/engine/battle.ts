@@ -55,8 +55,34 @@ export interface Synergy {
   roleCount: Record<RoleId, number>;
 }
 
+/** 팀마다 다른 효과(숫자 마법 카드). 없으면 보통 전투와 같음 */
+export interface TeamMods {
+  /** 가문 인원 더하기(문장 카드): 그 가문 친구가 1명 이상 있을 때만 */
+  famBonus?: Partial<Record<FamilyId, number>>;
+  /** 합창(2명 이상) 배율 +%p */
+  chorusPlus?: number;
+  /** 손잡기 방패 배율(%, 기본 100) */
+  handshakePct?: number;
+  /** 0박: 모든 친구 방패 */
+  startShield?: number;
+  /** 모든 친구 체력 +% */
+  hpPct?: number;
+  /** 기본 공격 +% */
+  atkPct?: number;
+  /** lateFrom박(없으면 뜨거운 박자)부터 노래(피해·회복·방패) +% */
+  lateSongPct?: number;
+  lateFrom?: number;
+  /** 가장 큰 숫자 친구 체력 +% */
+  bigHpPct?: number;
+  /** 우리 팀이 lastStandAt명(기본 1명) 이하로 남으면 기본 공격·노래 +% */
+  lastStandPct?: number;
+  lastStandAt?: number;
+}
+
 export interface BattleOptions {
   config?: BalanceConfig;
+  /** 팀별 마법 카드 효과 */
+  mods?: [TeamMods | undefined, TeamMods | undefined];
   log?: boolean;
   /** 팀별 피해 배율(%) — 밸런스 측정(파워 지수)용 */
   dmgMultPct?: [number, number];
@@ -148,7 +174,7 @@ function makeFighters(board: readonly BoardUnit[], team: TeamIndex, cfg: Balance
   });
 }
 
-export function computeSynergy(fighters: readonly Fighter[], cfg: BalanceConfig = DEFAULT_CONFIG): Synergy {
+export function computeSynergy(fighters: readonly Fighter[], cfg: BalanceConfig = DEFAULT_CONFIG, famBonus: TeamMods['famBonus'] = {}): Synergy {
   const famNums: Record<FamilyId, Set<number>> = { even: new Set(), tri: new Set(), five: new Set(), prime: new Set(), rich: new Set() };
   const roleChars: Record<RoleId, Set<number>> = { knight: new Set(), ninja: new Set(), hunter: new Set(), mage: new Set(), singer: new Set(), healer: new Set() };
   for (const f of fighters) {
@@ -159,7 +185,7 @@ export function computeSynergy(fighters: readonly Fighter[], cfg: BalanceConfig 
   const fam = {} as Record<FamilyId, number>;
   const famCount = {} as Record<FamilyId, number>;
   for (const k of Object.keys(famNums) as FamilyId[]) {
-    famCount[k] = famNums[k].size;
+    famCount[k] = famNums[k].size + (famNums[k].size ? (famBonus?.[k] ?? 0) : 0);
     fam[k] = tierOf(famCount[k], cfg.famTiers[k]);
   }
   const role = {} as Record<RoleId, number>;
@@ -180,8 +206,18 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
   const events: BattleEvent[] = [];
   const log = opts.log ? (e: BattleEvent) => events.push(e) : null;
 
+  const mods: [TeamMods, TeamMods] = [opts.mods?.[0] ?? {}, opts.mods?.[1] ?? {}];
   const teams: [Fighter[], Fighter[]] = [makeFighters(boardA, 0, cfg), makeFighters(boardB, 1, cfg)];
-  const syn: [Synergy, Synergy] = [computeSynergy(teams[0], cfg), computeSynergy(teams[1], cfg)];
+  // 마법 카드: 체력
+  for (const t of [0, 1] as TeamIndex[]) {
+    const m = mods[t];
+    const big = m.bigHpPct ? teams[t].slice().sort((a, b) => b.num - a.num || a.id - b.id)[0] : null;
+    for (const f of teams[t]) {
+      const pct = (m.hpPct ?? 0) + (f === big ? (m.bigHpPct ?? 0) : 0);
+      if (pct) f.maxHp = f.hp = Math.floor((f.maxHp * (100 + pct)) / 100);
+    }
+  }
+  const syn: [Synergy, Synergy] = [computeSynergy(teams[0], cfg, mods[0].famBonus), computeSynergy(teams[1], cfg, mods[1].famBonus)];
   const all = () => teams[0].concat(teams[1]);
   const isUp = (f: Fighter) => f.alive && f.hp > 0;
   const up = (t: TeamIndex) => teams[t].filter(isUp);
@@ -603,17 +639,19 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
         if (!adjacent(a, b)) continue;
         const g = gcd(a.num, b.num);
         if (g < 2) continue;
-        let v = g * cfg.handshakePerGcd;
+        let v = Math.floor((g * cfg.handshakePerGcd * (mods[t].handshakePct ?? 100)) / 100);
         if (a.items.includes('glove') || b.items.includes('glove')) v *= 2;
         hs.set(a, (hs.get(a) ?? 0) + v);
         hs.set(b, (hs.get(b) ?? 0) + v);
       }
     }
     for (const [u, v] of hs) {
-      const s = Math.min(cfg.handshakeCap, v);
+      const s = Math.min(Math.floor((cfg.handshakeCap * Math.max(100, mods[t].handshakePct ?? 100)) / 100), v);
       u.shield += s;
       log?.({ beat: 0, type: 'handshake', unit: u.id, shield: s });
     }
+    // 마법 카드: 시작 방패
+    if (mods[t].startShield) for (const u of us) u.shield += mods[t].startShield!;
   }
   // 몸풀기 노래(지금 숫자 24 이상, 절반 힘, 보너스 없음)
   {
@@ -665,7 +703,7 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
       if (k >= 2) k += singers.filter((u) => u.items.includes('mic')).length;
       const st = syn[t];
       const primeOnly = st.fam.prime > 0 && singers.every((u) => !u.minion && u.fams.includes('prime'));
-      const chorusBase = k >= 2 ? cfg.chorusPct[Math.min(k, 4)] : 100;
+      const chorusBase = k >= 2 ? cfg.chorusPct[Math.min(k, 4)] + (mods[t].chorusPlus ?? 0) : 100;
       const primeBase = primeOnly ? cfg.primeSongPct[st.fam.prime] : 100;
       const base = Math.max(chorusBase, primeBase);
       const fromChorus = k >= 2 && chorusBase >= primeBase;
@@ -682,11 +720,14 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
         }
         log?.({ beat, type: 'song', unit: u.id, rehearsal: false, mult: base });
       }
+      // 마법 카드: 뜨거운 박자 노래, 혼자 남은 친구
+      const lone = up(t).length <= (mods[t].lastStandAt ?? 1) ? (mods[t].lastStandPct ?? 0) : 0;
+      const late = beat >= (mods[t].lateFrom ?? cfg.hotBeatFrom) ? (mods[t].lateSongPct ?? 0) : 0;
       for (const u of regular) {
         const mage = !u.minion && u.role === 'mage' ? cfg.mageSongPct[st.role.mage] : 0;
         const M = Math.min(cfg.songMultCapPct, base + mage + singerBonus);
         const H = Math.min(cfg.songMultCapPct, supportBase + mage + singerBonus + cfg.healerSupportPct[st.role.healer]);
-        const sp = cfg.songPowerPct;
+        const sp = Math.floor((cfg.songPowerPct * (100 + lone + late)) / 100);
         u.stats.songs++;
         log?.({ beat, type: 'song', unit: u.id, rehearsal: false, mult: M });
         effects.push(...songEffects(u, Math.floor((M * sp) / 100), Math.floor((H * sp) / 100), false));
@@ -704,6 +745,8 @@ export function runBattle(boardA: readonly BoardUnit[], boardB: readonly BoardUn
         const tgt = basicTarget(u, foesOf(u));
         if (!tgt) continue;
         let a = u.atk;
+        const boost = (mods[t].atkPct ?? 0) + (up(t).length <= (mods[t].lastStandAt ?? 1) ? (mods[t].lastStandPct ?? 0) : 0);
+        if (boost) a = Math.floor((a * (100 + boost)) / 100);
         if (!u.minion && u.role === 'ninja') a = Math.floor((a * (100 + cfg.ninjaAtkPct[st.role.ninja])) / 100);
         if (!u.minion && u.role === 'hunter') a = Math.floor((a * (100 + cfg.hunterAtkPct[st.role.hunter])) / 100);
         if (beat >= cfg.hotBeatFrom) a = Math.floor((a * cfg.hotBasicPct) / 100);

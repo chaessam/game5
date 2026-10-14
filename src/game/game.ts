@@ -6,6 +6,7 @@ import { runBattle, type BattleResult } from '../engine/battle';
 import type { BoardUnit, Star, StoneOp, TreasureId } from '../engine/types';
 import { ECON, MEDALS, POOL, SHOP_ODDS, copiesOfStar } from './economy';
 import { fitItems } from './items';
+import { MAGIC_CARDS, hasCard, magicRounds, modsOf, ruleById, ruleConfig } from './magic';
 import type { BagItem, Difficulty, GameState, PendingReward, PlayerState, RoundPlan, Slot, UnitInst } from './types';
 
 // ---------------- 난수 ----------------
@@ -40,6 +41,10 @@ export interface NewGameOptions {
   /** 시뮬레이션용: 0번 자리도 컴퓨터(이 난이도) */
   seatZeroBot?: Difficulty;
   short?: boolean;
+  /** 이번 주 규칙 id(없으면 규칙 없음) */
+  rule?: string | null;
+  /** 짝꿍 팀전 2:2(4명일 때): 0·1번 자리 대 2·3번 자리 */
+  teams?: boolean;
 }
 
 export const BOT_NAME: Record<Difficulty, string[]> = {
@@ -68,8 +73,10 @@ export function createGame(opts: NewGameOptions): GameState {
     seed: opts.seed, rngState: opts.seed >>> 0, round: 0, rounds: roundPlans(opts.short), phase: 'prep',
     players: [newPlayer(0, opts.seatZeroBot ? `컴퓨터 ${BOT_NAME[opts.seatZeroBot][2]}` : (opts.humanName ?? '나'), !!opts.seatZeroBot, opts.seatZeroBot ?? 'easy')],
     pool, nextUid: 1, freePick: {}, pendingRewards: [], monsterIndex: 0, log: [],
+    rule: opts.rule ?? null,
   };
   for (let i = 0; i < nBots; i++) g.players.push(newPlayer(i + 1, `컴퓨터 ${botNames[i] ?? i + 1}`, true, diffs[i]));
+  if (opts.teams && g.players.length === 4) g.teams = [0, 0, 1, 1];
   startRound(g);
   return g;
 }
@@ -78,8 +85,8 @@ export function createGame(opts: NewGameOptions): GameState {
  * 온라인 대결 판: 자리 순서대로 플레이어(내 자리만 직접 둠, 나머지는 원격). 서버는 mySeat = -1(모두 원격).
  * 같은 시드·사람 수면 서버와 모든 기기의 첫 상태가 같고, 라운드 결과도 resolveRound(g, { boards, pairs })로 똑같이 나온다.
  */
-export function createOnlineGame(opts: { seed: number; short: boolean; names: string[]; mySeat: number; bots?: number[] }): GameState {
-  const g = createGame({ seed: opts.seed, short: opts.short, bots: opts.names.length - 1 });
+export function createOnlineGame(opts: { seed: number; short: boolean; names: string[]; mySeat: number; bots?: number[]; rule?: string | null; teams?: boolean }): GameState {
+  const g = createGame({ seed: opts.seed, short: opts.short, bots: opts.names.length - 1, rule: opts.rule, teams: opts.teams });
   g.players.forEach((p, i) => {
     p.name = opts.names[i];
     // bots: 빈자리 컴퓨터(보통) 중 이 기기(방장)가 대신 두는 자리
@@ -250,9 +257,15 @@ export function sell(g: GameState, p: PlayerState, uid: number): ActionResult {
   return { ok: true };
 }
 
+/** 이번 새로고침 값(마법 카드 '공짜 새로고침'이면 라운드 첫 번은 0) */
+export const rerollCostOf = (g: GameState, p: PlayerState) => (hasCard(p.cards, 'reroll') && p.freeRollRound !== g.round ? 0 : ECON.rerollCost);
+export const xpCostOf = (p: PlayerState) => ECON.xpCost - (hasCard(p.cards, 'xp') ? 1 : 0);
+
 export function reroll(g: GameState, p: PlayerState): ActionResult {
-  if (p.gold < ECON.rerollCost) return { ok: false, reason: '골드가 모자라요' };
-  p.gold -= ECON.rerollCost;
+  const cost = rerollCostOf(g, p);
+  if (p.gold < cost) return { ok: false, reason: '골드가 모자라요' };
+  p.gold -= cost;
+  if (!cost) p.freeRollRound = g.round;
   rollShop(g, p);
   return { ok: true };
 }
@@ -269,8 +282,9 @@ export function addXp(p: PlayerState, amount: number) {
 
 export function buyXp(p: PlayerState): ActionResult {
   if (p.level >= ECON.maxLevel) return { ok: false, reason: '이미 최고 레벨이에요' };
-  if (p.gold < ECON.xpCost) return { ok: false, reason: '골드가 모자라요' };
-  p.gold -= ECON.xpCost;
+  const cost = xpCostOf(p);
+  if (p.gold < cost) return { ok: false, reason: '골드가 모자라요' };
+  p.gold -= cost;
   addXp(p, ECON.xpAmount);
   return { ok: true };
 }
@@ -364,8 +378,9 @@ export function monsterFor(g: GameState): Monster {
 }
 
 // ---------------- 라운드 ----------------
-export function income(p: PlayerState): { base: number; interest: number; streak: number; total: number } {
-  const interest = Math.min(ECON.interestMax, Math.floor(p.gold / ECON.interestPer));
+export function income(p: PlayerState, g?: GameState | null): { base: number; interest: number; streak: number; total: number } {
+  const max = ECON.interestMax + (hasCard(p.cards, 'piggy') ? 2 : 0) + (ruleById(g?.rule)?.econ?.interestPlus ?? 0);
+  const interest = Math.min(max, Math.floor(p.gold / ECON.interestPer));
   const streak = Math.max(ECON.winStreakBonus(p.winStreak), ECON.lossStreakBonus(p.lossStreak));
   return { base: ECON.baseIncome, interest, streak, total: ECON.baseIncome + interest + streak };
 }
@@ -375,9 +390,13 @@ export function startRound(g: GameState) {
   const plan = currentPlan(g);
   g.monsterIndex = Math.floor(rand(g) * 2);
   for (const p of g.players) {
-    p.gold += income(p).total;
+    p.gold += income(p, g).total;
     if (g.round >= ECON.autoXpFromRound) addXp(p, ECON.autoXpPerRound);
     if (!p.shopLocked || p.shop.every((c) => c === null)) rollShop(g, p);
+  }
+  // 숫자 마법 카드: 정해진 라운드에 3장 중 1장(직접 두는 자리만 — 온라인의 다른 친구는 자기 기기에서)
+  if (magicRounds(g.rounds.length).includes(g.round) && !g.monsters) {
+    for (const p of g.players) if (!p.remote) p.cardChoice = drawCards(g, p);
   }
   g.phase = 'prep';
   if (g.round === 1) {
@@ -400,6 +419,50 @@ function drawOneCost(g: GameState): number | null {
   const u = pick(g, units);
   g.pool[u]--;
   return u;
+}
+
+// ---------------- 숫자 마법 카드 ----------------
+/** 아직 없는 카드 중 3장(경제 1장 이상, 전투 1장 이상 섞이게) */
+function drawCards(g: GameState, p: PlayerState): string[] {
+  const own = new Set(p.cards ?? []);
+  const free = MAGIC_CARDS.filter((c) => !own.has(c.id));
+  const econ = free.filter((c) => c.kind === 'econ');
+  const battle = free.filter((c) => c.kind === 'battle');
+  const take = (list: typeof free) => {
+    const c = list.length ? pick(g, list) : null;
+    if (c) list.splice(list.indexOf(c), 1);
+    return c;
+  };
+  const out = [take(econ), take(battle)];
+  const rest = econ.concat(battle);
+  out.push(take(rest));
+  // 섞기(첫 칸이 늘 경제 카드가 되지 않게)
+  const ids = out.filter((c): c is (typeof free)[number] => !!c).map((c) => c.id);
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(rand(g) * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids;
+}
+
+/** 마법 카드 고르기: 바로 받는 효과(골드·친구·돌)는 여기서 */
+export function chooseCard(g: GameState, p: PlayerState, index: number): ActionResult {
+  const id = p.cardChoice?.[index];
+  if (!id) return { ok: false, reason: '고를 카드가 없어요' };
+  p.cards = [...(p.cards ?? []), id];
+  p.cardChoice = undefined;
+  if (id === 'gold') p.gold += 5;
+  if (id === 'piggy') p.gold += 4;
+  if (id === 'mic') {
+    p.gold += 3;
+    addToBag(p, ['mic']);
+  }
+  if (id === 'gift') {
+    addCardToBench(g, p, 2);
+    addCardToBench(g, p, 2);
+  }
+  if (id === 'stones') giveStones(g, p, [pick(g, COMMON), pick(g, COMMON), pick(g, COMMON)]);
+  return { ok: true };
 }
 
 /** 1라운드 무료 카드 고르기. 고르지 않은 후보는 풀로 돌아간다. */
@@ -444,6 +507,14 @@ export function pairings(g: GameState): Pair[] {
   const n = g.players.length;
   const pvpRounds = g.rounds.filter((r) => r.kind === 'pvp');
   const k = pvpRounds.findIndex((r) => r.round === g.round);
+  if (g.teams && n === 4) {
+    // 짝꿍 팀전: 상대 팀하고만, 번갈아 가며
+    const A = [0, 1, 2, 3].filter((i) => g.teams![i] === 0);
+    const B = [0, 1, 2, 3].filter((i) => g.teams![i] === 1);
+    return k % 2 === 0
+      ? [{ a: A[0], b: B[0], mirror: false }, { a: A[1], b: B[1], mirror: false }]
+      : [{ a: A[0], b: B[1], mirror: false }, { a: A[1], b: B[0], mirror: false }];
+  }
   if (n === 2) return [{ a: 0, b: 1, mirror: false }];
   if (n === 4) {
     const S = [
@@ -466,12 +537,14 @@ export function pairings(g: GameState): Pair[] {
   return S3[k % 3];
 }
 
-function giveStones(p: PlayerState, items: BagItem[]) {
+const stoneCapOf = (g: GameState, p: PlayerState) => ECON.stoneCapPerGame + (hasCard(p.cards, 'stones') ? 3 : 0) + (ruleById(g.rule)?.econ?.stoneCapPlus ?? 0);
+
+function giveStones(g: GameState, p: PlayerState, items: BagItem[]) {
   const out: BagItem[] = [];
   for (const it of items) {
     const isStone = ['+1', '-1', 'x2', '/2', 'x3', '/3'].includes(it);
     if (isStone) {
-      if (p.stonesReceived >= ECON.stoneCapPerGame) { p.gold += ECON.stoneOverflowGold; continue; }
+      if (p.stonesReceived >= stoneCapOf(g, p)) { p.gold += ECON.stoneOverflowGold; continue; }
       p.stonesReceived++;
     }
     out.push(it);
@@ -499,6 +572,11 @@ function rewardOptions(g: GameState, p: PlayerState): PendingReward {
     boxes.push([c(), t()]);
     cardCost.push(null);
   }
+  // 이번 주 규칙 '돌 풍년': 모두 상자 하나 더
+  if (ruleById(g.rule)?.econ?.extraBox) {
+    boxes.push([c(), c()]);
+    cardCost.push(null);
+  }
   return { playerId: p.id, options: boxes, cardCost };
 }
 
@@ -518,7 +596,7 @@ export function chooseReward(g: GameState, playerId: number, index: number): Act
   if (i < 0) return { ok: false, reason: '받을 보상이 없어요' };
   const r = g.pendingRewards[i];
   const p = g.players[playerId];
-  giveStones(p, r.options[index]);
+  giveStones(g, p, r.options[index]);
   const cost = r.cardCost?.[index];
   if (cost) addCardToBench(g, p, cost);
   g.pendingRewards.splice(i, 1);
@@ -532,6 +610,8 @@ export interface ResolveOptions {
   pairs?: Pair[];
   /** 서버: 전투 기록·장면 없이 결과만(계산 아끼기) */
   light?: boolean;
+  /** 온라인: 자리마다 마법 카드(서버가 받은 것) */
+  cards?: (string[] | null | undefined)[];
 }
 
 /** 준비 끝 → 모든 전투 → 메달·골드·연승연패 → 보상 대기 또는 다음 라운드 준비 */
@@ -539,7 +619,9 @@ export function resolveRound(g: GameState, opts: ResolveOptions = {}): RoundOutc
   const plan = currentPlan(g);
   for (const p of g.players) if (!opts.boards?.[p.id]) autoFill(p);
   const boardOf = (p: PlayerState) => opts.boards?.[p.id] ?? toBattleBoard(p);
-  const bopts = opts.light ? {} : { log: true, frames: true };
+  const config = ruleConfig(g.rule);
+  const modsFor = (p: PlayerState) => modsOf(opts.cards?.[p.id] ?? p.cards);
+  const bopts = opts.light ? { config } : { config, log: true, frames: true };
   const out: RoundOutcome = { round: g.round, kind: plan.kind, fights: [], medals: {}, gold: {} };
   const addMedal = (p: PlayerState, m: number) => {
     p.medals += m;
@@ -548,7 +630,7 @@ export function resolveRound(g: GameState, opts: ResolveOptions = {}): RoundOutc
   if (plan.kind === 'pve') {
     const mon = monsterFor(g);
     for (const p of g.players) {
-      const result = runBattle(boardOf(p), mon.board, bopts);
+      const result = runBattle(boardOf(p), mon.board, { ...bopts, mods: [modsFor(p), undefined] });
       const win = result.winner === 0;
       addMedal(p, win ? MEDALS.pve.win : MEDALS.pve.loss);
       if (win) {
@@ -563,7 +645,7 @@ export function resolveRound(g: GameState, opts: ResolveOptions = {}): RoundOutc
     for (const pr of opts.pairs ?? pairings(g)) {
       const A = g.players[pr.a];
       const B = g.players[pr.b];
-      const result = runBattle(boardOf(A), boardOf(B), bopts);
+      const result = runBattle(boardOf(A), boardOf(B), { ...bopts, mods: [modsFor(A), modsFor(B)] });
       out.fights.push({ a: pr.a, b: pr.b, mirror: pr.mirror, label: pr.mirror ? `거울 ${B.name}` : B.name, result });
       const sides: [PlayerState, 0 | 1][] = pr.mirror ? [[A, 0]] : [[A, 0], [B, 1]];
       for (const [p, side] of sides) {
@@ -582,13 +664,64 @@ export function resolveRound(g: GameState, opts: ResolveOptions = {}): RoundOutc
         // 3연패 위로 상자(본인만, 한 판 1번): 돌 1개
         if (p.lossStreak === 3 && !p.consolationUsed) {
           p.consolationUsed = true;
-          giveStones(p, [pick(g, COMMON)]);
+          giveStones(g, p, [pick(g, COMMON)]);
         }
+      }
+    }
+  }
+  // 짝꿍 팀전: 같은 라운드에 둘 다 이기면 메달 +1씩
+  if (g.teams && plan.kind === 'pvp') {
+    for (const team of [0, 1]) {
+      const mates = g.players.filter((q) => g.teams![q.id] === team);
+      if (mates.length === 2 && mates.every((q) => q.history.at(-1)?.round === g.round && q.history.at(-1)?.result === 'win')) {
+        for (const q of mates) addMedal(q, TEAM_BOTH_WIN_BONUS);
       }
     }
   }
   g.phase = g.pendingRewards.length ? 'reward' : 'prep';
   return out;
+}
+
+/** 짝꿍 팀전: 둘 다 이긴 라운드 보너스 메달 */
+export const TEAM_BOTH_WIN_BONUS = 1;
+
+/** 짝꿍 팀전: 팀마다 메달 합 */
+export function teamTotals(g: GameState): [number, number] {
+  const t: [number, number] = [0, 0];
+  if (g.teams) g.players.forEach((p) => (t[g.teams![p.id] as 0 | 1] += p.medals));
+  return t;
+}
+export const partnerOf = (g: GameState, p: PlayerState): PlayerState | null =>
+  g.teams ? (g.players.find((q) => q.id !== p.id && g.teams![q.id] === g.teams![p.id]) ?? null) : null;
+
+/** 짝꿍에게 친구 보내기(라운드마다 1번): 보내는 쪽 */
+export function takeForGift(g: GameState, p: PlayerState, uid: number): ActionResult & { unit?: UnitInst } {
+  if (!g.teams) return { ok: false, reason: '짝꿍 팀전에서만 보낼 수 있어요' };
+  if (p.giftRound === g.round) return { ok: false, reason: '이번 라운드에는 이미 보냈어요' };
+  const f = findUnit(p, uid);
+  if (!f) return { ok: false, reason: '없는 친구예요' };
+  removeAt(p, f.slot);
+  p.giftRound = g.round;
+  return { ok: true, unit: f.unit };
+}
+/** 받는 쪽: 대기석에 자리가 없으면 그 값만큼 골드 */
+export function receiveGift(g: GameState, p: PlayerState, u: Pick<UnitInst, 'char' | 'star' | 'items'>) {
+  const free = p.bench.findIndex((x) => x === null);
+  if (free < 0) {
+    p.gold += sellValue({ uid: 0, char: u.char, star: u.star, items: [] });
+    return;
+  }
+  p.bench[free] = { uid: g.nextUid++, char: u.char, star: u.star, items: u.items.slice(0, 2) };
+  mergeAll(g, p, u.char);
+}
+/** 혼자 하는 팀전(짝꿍이 이 기기에 있음) */
+export function giftUnit(g: GameState, from: PlayerState, uid: number): ActionResult {
+  const mate = partnerOf(g, from);
+  if (!mate) return { ok: false, reason: '짝꿍이 없어요' };
+  const r = takeForGift(g, from, uid);
+  if (!r.ok) return r;
+  receiveGift(g, mate, r.unit!);
+  return { ok: true };
 }
 
 /** 보상을 다 고른 뒤 호출: 다음 라운드 시작 또는 게임 끝 */
@@ -602,7 +735,9 @@ export function advance(g: GameState) {
 }
 
 export function ranking(g: GameState): PlayerState[] {
-  return g.players.slice().sort((a, b) => b.medals - a.medals || b.wins - a.wins || b.lastSurvivors - a.lastSurvivors);
+  const tt = teamTotals(g);
+  const team = (p: PlayerState) => (g.teams ? tt[g.teams[p.id] as 0 | 1] : 0);
+  return g.players.slice().sort((a, b) => team(b) - team(a) || b.medals - a.medals || b.wins - a.wins || b.lastSurvivors - a.lastSurvivors);
 }
 
 /** 상점 카드 '사면' 띠: 이 카드를 사면 가문·직업 인원이 어떻게 바뀌나(보드 기준) */

@@ -165,7 +165,7 @@ describe('한 판 전체', () => {
     for (const p of g1.players) {
       expect(p.history.length).toBe(12);
       expect(p.medals).toBeGreaterThanOrEqual(12); // 져도 매 라운드 메달 1개 이상
-      expect(p.stonesReceived).toBeLessThanOrEqual(ECON.stoneCapPerGame);
+      expect(p.stonesReceived).toBeLessThanOrEqual(ECON.stoneCapPerGame + (p.cards?.includes('stones') ? 3 : 0)); // 마법 카드 '돌 주머니'면 +2
       expect(p.bag.length).toBeLessThanOrEqual(ECON.bagSize);
     }
     expect(ranking(g1)[0].medals).toBeGreaterThanOrEqual(ranking(g1)[3].medals);

@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, UNITS, tierOf, unitDef } from '../engine/data';
 import { applyStones, familiesOf } from '../engine/math';
 import type { FamilyId, ItemId, RoleId, Star, StoneOp, TreasureId } from '../engine/types';
 import { ECON } from './economy';
+import { modsOf } from './magic';
 import type { BagItem, GameState, PlayerState, UnitInst } from './types';
 
 export const STONES: readonly StoneOp[] = ['+1', '-1', 'x2', '/2', 'x3', '/3'];
@@ -121,12 +122,14 @@ export interface BoardSynergy {
 }
 
 /** 가문은 '서로 다른 지금 숫자', 직업은 '서로 다른 캐릭터'로 센다. 대기석은 세지 않는다. */
-export function synergyOf(units: readonly Pick<UnitInst, 'char' | 'items'>[]): BoardSynergy {
+/** famBonus: 마법 카드 '문장'(그 가문 친구가 1명 이상 있을 때만 더함 — 전투와 같은 규칙) */
+export function synergyOf(units: readonly Pick<UnitInst, 'char' | 'items'>[], famBonus?: Partial<Record<FamilyId, number>>): BoardSynergy {
   const nums = new Set(units.map(numberOf));
   const chars = new Set(units.map((u) => u.char));
   const fam = {} as BoardSynergy['fam'];
   for (const f of FAM_ORDER) {
-    const count = [...nums].filter((n) => familiesOf(n).includes(f)).length;
+    const real = [...nums].filter((n) => familiesOf(n).includes(f)).length;
+    const count = real + (real ? (famBonus?.[f] ?? 0) : 0);
     fam[f] = { count, tier: tierOf(count, DEFAULT_CONFIG.famTiers[f]) };
   }
   const role = {} as BoardSynergy['role'];
@@ -137,7 +140,7 @@ export function synergyOf(units: readonly Pick<UnitInst, 'char' | 'items'>[]): B
   return { nums, chars, fam, role };
 }
 
-export const boardSynergy = (p: PlayerState) => synergyOf([...p.board.values()]);
+export const boardSynergy = (p: PlayerState) => synergyOf([...p.board.values()], modsOf(p.cards)?.famBonus);
 
 // ---------------- 미리보기(3줄 + 30박) ----------------
 export interface FamChange {

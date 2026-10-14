@@ -376,6 +376,29 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .autostart { text-align: center; }
 .autostart .jua { font-size: 22px; color: var(--gold); }
 
+/* 3단계: 이번 주 규칙 · 숫자 마법 카드 · 짝꿍 팀전 */
+.rulebar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; border: 2px solid rgba(127,211,255,.5); background: rgba(127,211,255,.1); font-size: 14px; }
+.rulebar b { font-family: 'Jua', sans-serif; font-weight: 400; font-size: 17px; color: #9fe0ff; }
+.rulebar span { color: #e6e2ff; }
+.rulechip { border: 1px solid rgba(127,211,255,.6); background: rgba(127,211,255,.15); color: #cfeeff; cursor: pointer; }
+.cardsb { white-space: nowrap; }
+.embtag { font-size: 11px; font-weight: 800; color: #1d1440; background: #ffe27a; border-radius: 999px; padding: 0 6px; }
+.mcard { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.mcard .mi { font-size: 40px; line-height: 1.1; }
+.mcard .mt { font-size: 14px; line-height: 1.35; }
+.mcard .mk { font-size: 11px; color: var(--muted); }
+.choice.mcard.econ { border-color: rgba(255,197,49,.6); }
+.choice.mcard.battle { border-color: rgba(255,107,129,.6); }
+.mcard.mini { flex-direction: row; align-items: center; gap: 8px; text-align: left; background: rgba(255,255,255,.05); border: 1px solid var(--line); border-radius: 12px; padding: 6px 10px; margin: 4px 0; }
+.mcard.mini .mi { font-size: 26px; }
+.mcard.mini small { color: var(--muted); }
+.teamscore b { font-size: 22px; } .teamscore b.win { color: var(--good); } .teamscore b.loss { color: var(--bad); }
+.scout.mate { border-color: var(--good); background: rgba(62,224,127,.14); }
+.scout.foeteam { border-color: rgba(255,107,129,.5); }
+.scout .ctag { font-size: 11px; letter-spacing: -2px; }
+.teamend { font-size: 20px; text-align: center; } .teamend.win { color: var(--good); } .teamend.loss { color: var(--bad); }
+.teamend b { font-size: 26px; margin-left: 6px; }
+
 /* 휴대폰에서만 보이는 것 */
 .synstrip, .inc-m, .brk, .minibar { display: none; }
 .minibar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; align-items: center; gap: 8px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: #1d1650; border-top: 2px solid var(--gold); box-shadow: 0 -8px 26px rgba(0,0,0,.5); font-size: 13px; line-height: 1.35; }
@@ -493,6 +516,9 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .seats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lobbybtns .btn { flex: 1 1 45%; }
   .otimer { display: none; }
+  .rulechip .rn, .teamscore small { display: none; }
+  .cardsb { order: 4; padding: 4px 6px; font-size: 12px; }
+  .rulechip { order: 4; }
   .emob { order: 4; padding: 4px 8px; }
   .emopanel { top: 64px; }
   #nc-emotes { top: 70px; right: 6px; }
