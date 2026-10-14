@@ -3,7 +3,7 @@ import type { ClientMsg, ServerMsg } from '../shared/online';
 import { roomSocketUrl } from './api';
 
 /** 서버가 일부러 닫은 이유(다시 잇지 않음) */
-const FINAL = new Set(['full', 'started', 'ended', 'no_room', 'replaced', 'leave']);
+const FINAL = new Set(['full', 'started', 'ended', 'no_room', 'replaced', 'leave', 'not_playing']);
 
 export type ConnStatus = 'open' | 'retry' | 'closed';
 
@@ -18,13 +18,15 @@ export class RoomConn {
     private onStatus: (s: ConnStatus, reason?: string) => void,
     /** 다시 이을 때 내가 어디까지 했는지(그 라운드부터 결과를 다시 받음) */
     private round: () => number,
+    /** 구경하기 */
+    private spec = false,
   ) {
     this.connect();
   }
 
   private connect() {
     if (this.stopped) return;
-    const ws = new WebSocket(roomSocketUrl(this.id));
+    const ws = new WebSocket(roomSocketUrl(this.id, this.spec));
     this.ws = ws;
     ws.onopen = () => {
       this.tries = 0;

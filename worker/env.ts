@@ -13,6 +13,8 @@ export interface Who {
   nick: string;
   schoolName: string;
   points: number;
-  /** 선생님 계정(반 대기실을 열 수 있음) */
+  /** 선생님 계정(학습 지표를 볼 수 있음) */
   teacher: boolean;
+  /** 리그 꾸미기 칭호 */
+  title?: string;
 }

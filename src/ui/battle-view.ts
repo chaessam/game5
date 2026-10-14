@@ -12,6 +12,8 @@ export interface BattleViewOpts {
   /** 우리 팀 번호(아래쪽) */
   side: 0 | 1;
   oppName: string;
+  /** 관전: 아래 팀 이름(없으면 '우리 팀') */
+  myName?: string;
   /** 끝나거나 건너뛰면 */
   onDone: () => void;
   /** 박이 끝날 때 하나쌤이 할 말(튜토리얼·처음 보는 순간). 말이 있으면 멈추고 [계속]을 기다린다 */
@@ -134,7 +136,7 @@ export class BattleView {
       <div class="bv-arena">
         <div class="bv-label foe">상대: <b>${esc(this.opts.oppName)}</b></div>
         <div class="bv-grid">${grid}</div>
-        <div class="bv-label mine"><b>우리 팀</b></div>
+        <div class="bv-label mine"><b>${esc(this.opts.myName ?? '우리 팀')}</b></div>
         <div class="bv-fx"></div>
       </div>
       <div class="bv-log"></div>`;

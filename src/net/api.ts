@@ -1,6 +1,6 @@
 // 서버(Cloudflare Worker /api)와 이야기하기. 서버가 없거나(내 컴퓨터 vite) 한도가 차도 게임은 그대로 된다.
 import type { BoardUnit } from '../engine/types';
-import type { LobbyRoom, RankRow } from '../shared/online';
+import type { ClassRow, LobbyRoom, PlayingRoom, RankRow } from '../shared/online';
 
 export interface Auth {
   token: string;
@@ -19,9 +19,14 @@ export interface MyRecord {
   collection: { met?: number[]; three?: number[]; morphs?: string[] };
   tutorial: boolean;
   tips: string[];
-  /** 랭크 점수 · 랭크 판 수 */
+  /** 랭크 점수 · 랭크 판 수 · 가 본 가장 높은 점수 */
   points: number;
   ranked: number;
+  bestPoints: number;
+  /** 리그 꾸미기 */
+  title: string;
+  theme: string;
+  quiz: number;
 }
 
 const KEY = 'nc-auth';
@@ -77,7 +82,7 @@ export async function logout() {
 export const me = () => call<{ school: string; nick: string; teacher: boolean; record: MyRecord }>('GET', 'me');
 // 서버 요청은 무료 한도를 아끼려고 꼭 필요할 때만: 페이지를 열 때 내 기록 1번, 들어갈 때 1번,
 // 판이 끝날 때 1번(기록 + 본 말풍선 + 친구 유령을 한꺼번에), 튜토리얼을 마칠 때 1번.
-export const saveProgress = (p: { tutorialDone?: boolean; tips?: string[] }) =>
+export const saveProgress = (p: { tutorialDone?: boolean; tips?: string[]; title?: string; theme?: string; quiz?: number }) =>
   auth ? call<{ record: MyRecord }>('POST', 'progress', p) : Promise.resolve({ ok: false } as const);
 export const saveRecord = (r: {
   rank: number;
@@ -92,7 +97,9 @@ export const fetchGhosts = (n: number) => call<{ ghosts: { nick: string; rounds:
 
 // ---- 온라인 대결(랭크) ----
 // 방 목록은 방 고르는 화면이 열려 있을 때만 몇 초마다 1번, 게임 중에는 WebSocket 하나(라운드마다 보드 1번)
-export const listRooms = () => call<{ rooms: LobbyRoom[] }>('GET', 'rooms');
+export const listRooms = () => call<{ rooms: LobbyRoom[]; playing: PlayingRoom[] }>('GET', 'rooms');
 export const createRoom = (short: boolean) => call<{ id: string }>('POST', 'rooms', { short, size: 4 });
+export const fetchClass = () => call<{ rows: ClassRow[] }>('GET', 'class');
 export const fetchRanking = (scope: 'school' | 'all') => call<{ rows: RankRow[] }>('GET', `ranking?scope=${scope}`);
-export const roomSocketUrl = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/room/${id}/ws?t=${encodeURIComponent(auth?.token ?? '')}`;
+export const roomSocketUrl = (id: string, spec = false) =>
+  `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/room/${id}/ws?t=${encodeURIComponent(auth?.token ?? '')}${spec ? '&spec=1' : ''}`;

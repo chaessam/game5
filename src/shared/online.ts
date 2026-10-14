@@ -45,6 +45,7 @@ export interface SeatInfo {
   online: boolean;
   bot?: boolean;
   teacher?: boolean;
+  title?: string;
 }
 
 export interface RoomInfo {
@@ -84,12 +85,34 @@ export interface RoundMsg {
   next: { monsterIndex: number; remainMs: number } | null;
   /** 마지막 라운드: 등수와 랭크 점수 */
   final?: FinalPlace[];
+  /** 몬스터 라운드: 몬스터(구경하는 친구가 장면을 다시 만들 때 씀) */
+  monster?: { name: string; board: BoardUnit[] };
+}
+
+/** 구경하러 들어오면 한 번 받는 것: 지금까지의 라운드 결과로 장면을 다시 만들 수 있음 */
+export interface SpecInfo {
+  title: string;
+  short: boolean;
+  names: string[];
+  points: number[];
+  bots: number[];
+  rule: string | null;
+  teams: boolean;
+  round: number;
+  results: RoundMsg[];
+}
+
+export interface PlayingRoom {
+  id: string;
+  title: string;
+  n: number;
+  short: boolean;
 }
 
 export type ServerMsg =
   | { t: 'room'; room: RoomInfo; you: number }
   | {
-      t: 'start'; seed: number; short: boolean; names: string[]; points: number[]; you: number; monsterIndex: number; remainMs: number;
+      t: 'start'; seed: number; short: boolean; names: string[]; points: number[]; titles?: string[]; you: number; monsterIndex: number; remainMs: number;
       /** 컴퓨터 자리와, 그 컴퓨터를 대신 두는 자리(방장) */
       bots: number[]; driver: number;
       /** 사람이 2명 이상이라 점수가 걸린 판 */
@@ -105,7 +128,10 @@ export type ServerMsg =
   | { t: 'emote'; seat: number; nick: string; id: number }
   | { t: 'notice'; text: string }
   /** 짝꿍이 보낸 친구 */
-  | { t: 'gift'; from: number; to: number; unit: GiftUnit };
+  | { t: 'gift'; from: number; to: number; unit: GiftUnit }
+  | { t: 'spec'; info: SpecInfo }
+  /** 구경하는 친구 수 */
+  | { t: 'watchers'; n: number };
 
 export type ClientMsg =
   | { t: 'hello'; round: number }
@@ -138,6 +164,25 @@ export interface RankRow {
   schoolName: string;
   points: number;
   ranked: number;
+  title: string;
+}
+
+/** 선생님 학습 지표 한 줄 */
+export interface ClassRow {
+  nick: string;
+  games: number;
+  firsts: number;
+  points: number;
+  ranked: number;
+  tutorial: boolean;
+  quiz: number;
+  tips: number;
+  bestChorus: number;
+  chorusBeat: number;
+  met: number;
+  three: number;
+  morphs: number;
+  updated: number;
 }
 
 export const ROOM_ID = /^[A-Z2-9]{5}$/;

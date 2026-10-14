@@ -13,7 +13,8 @@ import {
 } from '../game/game';
 import { botFreePick, botPrep, botRewards } from '../game/bot';
 import { chooseCard, deserializeGame, giftUnit, partnerOf, receiveGift, rerollCostOf, serializeGame, takeForGift, teamTotals, xpCostOf } from '../game/game';
-import { MAGIC_CARDS, cardById, modsOf, ruleById, ruleOfWeek } from '../game/magic';
+import { MAGIC_CARDS, cardById, modsOf, ruleById, ruleConfig, ruleOfWeek } from '../game/magic';
+import { runBattle } from '../engine/battle';
 import { ECON, SHOP_ODDS } from '../game/economy';
 import {
   FAM_ORDER, ITEM_HELP, ITEM_LABEL, ITEM_NAME, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, previewEquip, secondSlotRound, slotCount,
@@ -29,11 +30,12 @@ import { bindLoginInputs, handleLoginAction, loginBoxHtml, myRecord, refreshMe, 
 import { QUIZ, TUT_ROUNDS, TUT_STEPS, createTutorial, fixTutorialRewards, prepareTutorialRound, stepDone, tutorialAllows, type TutTalk } from '../game/tutorial';
 import { readAloud } from './battle-view';
 import { TIPS, battleTips, clearPending, markSeen, mergeSeen, pendingTips, prepTip, prepTipLine, seenTips } from './tips';
-import { createRoom, fetchGhosts, fetchRanking, getAuth, listRooms, saveProgress, saveRecord } from '../net/api';
+import { createRoom, fetchClass, fetchGhosts, fetchRanking, getAuth, listRooms, saveProgress, saveRecord } from '../net/api';
 import { RoomConn, type ConnStatus } from '../net/room';
 import { cleanBoard } from '../shared/board';
-import { EMOTES, type ClientMsg, type FinalPlace, type LobbyRoom, type RankRow, type RoomInfo, type RoundMsg, type ServerMsg } from '../shared/online';
-import { placePointsText, rankTier } from '../shared/rank';
+import { EMOTES, type ClassRow, type ClientMsg, type FinalPlace, type LobbyRoom, type PlayingRoom, type RankRow, type RoomInfo, type RoundMsg, type ServerMsg, type SpecInfo } from '../shared/online';
+import { TIERS, placePointsText, rankTier } from '../shared/rank';
+import { THEMES, TITLES, themeById, themeUnlocked, titleName, unlockedTitles, type Profile } from '../shared/cosmetics';
 import { josa, josaOnly } from '../shared/josa';
 
 // ---------------- 상태 ----------------
@@ -86,6 +88,8 @@ type Modal =
   | { type: 'lobby' }
   | { type: 'room' }
   | { type: 'rank'; scope: 'school' | 'all'; back: Modal | null }
+  | { type: 'deco'; back: Modal | null }
+  | { type: 'teach'; back: Modal | null }
   | null;
 let modal: Modal = { type: 'start' };
 let nbNum = 12;
@@ -295,7 +299,8 @@ function detailHtml(p: PlayerState) {
     const list = (p.cards ?? []).map((id) => cardById(id)).filter(Boolean);
     return `<aside class="drawer small"><button class="btn small ghost close" data-action="close">닫기</button><h3>🃏 내 숫자 마법 카드</h3>
       ${list.map((c) => `<div class="mcard mini ${c!.kind}"><span class="mi">${c!.icon}</span><span><b>${esc(c!.name)}</b><br><small>${esc(c!.text)}</small></span></div>`).join('')}
-      <p class="sub">카드는 이번 판 내내 효과가 있어요. ${g!.rounds.length >= 12 ? '3·6·9' : '2·5'}라운드에 한 장씩 골라요.</p></aside>`;
+      <p class="sub">카드는 이번 판 내내 효과가 있어요. ${g!.rounds.length >= 12 ? '3·6·9' : '2·5'}라운드에 한 장씩 골라요.</p>
+      ${ruleById(g!.rule) ? `<p class="cdrule">${ruleById(g!.rule)!.icon} <b>이번 주 규칙: ${esc(ruleById(g!.rule)!.name)}</b><br><small>${esc(ruleById(g!.rule)!.text)}</small></p>` : ''}</aside>`;
   }
   if (selected.kind === 'rule') {
     const r = ruleById(g!.rule);
@@ -507,6 +512,8 @@ function modalHtml(): string {
   if (modal?.type === 'lobby') return lobbyHtml();
   if (modal?.type === 'room') return roomHtml();
   if (modal?.type === 'rank') return rankHtml(modal);
+  if (modal?.type === 'deco') return decoHtml();
+  if (modal?.type === 'teach') return teachHtml();
   if (!g || modal?.type === 'start') {
     return `<div class="modal"><div class="box">
       <h2>숫자체스: 합창 대작전</h2>
@@ -529,7 +536,7 @@ function modalHtml(): string {
       </div>
       <button class="choice onlinebtn" data-action="lobby"><b class="jua" style="font-size:22px">⚔️ 온라인 대결 (랭크)</b><br>친구와 2~4명이 동시에 · 등수대로 점수 · 브론즈 → 챌린저${getAuth() ? '' : '<br><small>들어가기를 하면 할 수 있어요</small>'}</button>
       <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요.</p>
-      <p class="links"><a href="./dogam.html">🐾 캐릭터 도감</a> <a href="#" data-action="notebook">📘 수학 수첩</a> <a href="#" data-action="rank">🏆 랭킹</a></p>
+      <p class="links"><a href="./dogam.html">🐾 캐릭터 도감</a> <a href="#" data-action="notebook">📘 수학 수첩</a> <a href="#" data-action="rank">🏆 랭킹</a> <a href="#" data-action="deco">🎨 꾸미기</a>${getAuth()?.teacher ? ' <a href="#" data-action="teach">📊 학습 지표</a>' : ''}</p>
     </div></div>`;
   }
   if (battle) return '';
@@ -602,6 +609,11 @@ function resultHtml(o: RoundOutcome) {
 // ---------------- 그리기 ----------------
 function render() {
   pumpOnline();
+  if (spec && !modal) {
+    app.innerHTML = specHtml();
+    if (battle) document.getElementById('bvhost')?.appendChild(battle.root);
+    return;
+  }
   if (!g) {
     app.innerHTML = modalHtml();
     return;
@@ -635,13 +647,13 @@ function render() {
         const mine = g.teams[p.id] as 0 | 1;
         return `<div class="stat teamscore" title="짝꿍 팀전: 팀 메달 합">👯<b class="jua ${tt[mine] >= tt[1 - mine] ? 'win' : 'loss'}">${tt[mine]}</b><small>: ${tt[1 - mine]}</small></div>`;
       })() : ''}
-      <div class="stat">🪙<span class="big" style="color:var(--gold)">${p.gold}</span><small class="inc">다음 수입 = ${inc.base} + 저금 ${inc.interest}${inc.streak ? ` + ${p.winStreak >= 2 ? '연승' : '연패'} ${inc.streak}` : ''} = ${inc.total}</small><small class="inc-m">다음 +${inc.total}</small></div>
+      <div class="stat">🪙<span class="big" style="color:var(--gold)">${p.gold}</span><small class="inc">다음 수입 = ${inc.base} + 저금 ${inc.interest}${inc.streak ? ` + ${p.winStreak >= 2 ? '연승' : '연패'} ${inc.streak}` : ''} = ${inc.total}</small><small class="inc-m"><span class="nx">다음 </span>+${inc.total}</small></div>
       <div class="lv"><b class="jua" style="font-size:18px">레벨 ${p.level}</b>
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
         <button class="btn small" data-action="xp" ${p.gold < xpCostOf(p) ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (${xpCostOf(p)}골드)</button>` : '<small>최고 레벨</small>'}</div>
-      ${online?.playing ? '<button class="btn small ghost emob" data-action="emotes" title="감정 스티커">😀</button>' : ''}
+      ${online?.playing ? `<button class="btn small ghost emob" data-action="emotes" title="감정 스티커">😀</button>${watchersN ? `<span class="sub watchn">👀 ${watchersN}</span>` : ''}` : ''}
       ${ruleById(g.rule) ? `<button class="tag rulechip" data-action="rule" title="이번 주 규칙">${ruleById(g.rule)!.icon}<span class="rn"> ${ruleById(g.rule)!.name}</span></button>` : ''}
-      ${p.cards?.length ? `<button class="btn small ghost cardsb" data-action="cards" title="내 숫자 마법 카드">🃏 ${p.cards.map((c) => cardById(c)?.icon ?? '').join('')}</button>` : ''}
+      ${p.cards?.length ? `<button class="btn small ghost cardsb" data-action="cards" title="내 숫자 마법 카드">${ruleById(g.rule) ? `<span class="cdr">${ruleById(g.rule)!.icon}</span>` : ''}🃏<span class="cdi"> ${p.cards.map((c) => cardById(c)?.icon ?? '').join('')}</span><span class="cdn">${p.cards.length}</span></button>` : ''}
       <button class="btn small ghost nb" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘<span class="nbt"> 수첩</span></button>
       ${online?.playing && g.phase !== 'over' ? `<span class="otimer nc-timer">${fmtLeft(online.deadline - Date.now())}</span>` : ''}
       ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : onlineLocked() ? `<span class="ready tag waiting">⏳ 기다리는 중 ${online!.readyN}/${online!.readyOf || g.players.length}<small class="nc-timer mt">${fmtLeft(online!.deadline - Date.now())}</small></span>` : `<button class="btn gold ready" data-action="ready">준비 완료 ▶${online?.playing ? `<small class="nc-timer mt">${fmtLeft(online.deadline - Date.now())}</small>` : ''}</button>`}
@@ -828,6 +840,80 @@ app.addEventListener('click', (ev) => {
   }
   if (a === 'startroom') {
     online?.conn.send({ t: 'start' });
+    return;
+  }
+  if (a === 'spec') {
+    startSpec(el.dataset.id!);
+    return render();
+  }
+  if (a === 'specleave') {
+    stopSpec();
+    openLobby();
+    return render();
+  }
+  if (a === 'specfight') {
+    playSpecFight(Number(el.dataset.r), Number(el.dataset.i));
+    return render();
+  }
+  if (a === 'emote' && spec) {
+    if (Date.now() - lastEmoteSent < 2000) {
+      toast('스티커는 2초에 하나씩!');
+      return render();
+    }
+    lastEmoteSent = Date.now();
+    spec.conn.send({ t: 'emote', id: Number(el.dataset.i) });
+    emotePicker = false;
+    return render();
+  }
+  if (a === 'emotes' && spec) {
+    emotePicker = !emotePicker;
+    return render();
+  }
+  if (a === 'deco') {
+    modal = { type: 'deco', back: modal };
+    return render();
+  }
+  if (a === 'closedeco' || a === 'closeteach') {
+    modal = modal?.type === 'deco' || modal?.type === 'teach' ? modal.back : { type: 'start' };
+    return render();
+  }
+  if (a === 'settitle') {
+    const id = el.dataset.id ?? '';
+    const rec = myRecord();
+    if (rec) setLocalRecord({ ...rec, title: id });
+    void saveProgress({ title: id }).then((r) => {
+      if (r.ok) setLocalRecord(r.record);
+      render();
+    });
+    return render();
+  }
+  if (a === 'settheme') {
+    const id = el.dataset.id!;
+    try {
+      localStorage.setItem('nc-theme', id);
+    } catch {
+      /* 무시 */
+    }
+    const rec = myRecord();
+    if (rec) {
+      setLocalRecord({ ...rec, theme: id });
+      void saveProgress({ theme: id });
+    }
+    applyTheme();
+    return render();
+  }
+  if (a === 'teach') {
+    modal = { type: 'teach', back: modal };
+    classRows = null;
+    void fetchClass().then((r) => {
+      classRows = r.ok ? r.rows : [];
+      if (!r.ok) toast(r.error ?? '불러오지 못했어요');
+      render();
+    });
+    return render();
+  }
+  if (a === 'classcsv') {
+    downloadClassCsv();
     return;
   }
   if (a === 'quickjoin') {
@@ -1092,6 +1178,8 @@ let online: {
   autoAt: number | null;
 } | null = null;
 let lastEmoteSent = 0;
+/** 내 게임을 구경하는 친구 수 */
+let watchersN = 0;
 let onlineTimer = 0;
 /** 준비 완료를 누른 뒤에는 판을 못 바꿈(서버가 이미 받은 보드로 싸우니까) */
 const LOCKED_WHEN_READY = new Set(['buy', 'sell', 'sellzone', 'reroll', 'xp', 'lock', 'cell', 'benchslot', 'unit', 'bagitem', 'equipok', 'unequip', 'pick']);
@@ -1123,6 +1211,7 @@ function openLobby() {
 async function refreshRooms(manual: boolean) {
   const r = await listRooms();
   lobbyRooms = r.ok ? r.rooms : [];
+  playingRooms = r.ok ? (r.playing ?? []) : [];
   if (!r.ok && manual) toast(r.error ?? '방 목록을 불러오지 못했어요');
   if (modal?.type === 'lobby') render();
 }
@@ -1296,6 +1385,9 @@ function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
       break;
     case 'notice':
       toast(m.text);
+      break;
+    case 'watchers':
+      watchersN = m.n;
       break;
     case 'start':
       startOnline(o, m);
@@ -1496,6 +1588,7 @@ function lobbyHtml(): string {
     <p class="sub">같은 방 친구들과 동시에 겨뤄요(2~4명). 끝난 등수대로 점수를 받아요. 꼴등만 조금 잃어요.<br>2명: ${placePointsText(2)} · 4명: ${placePointsText(4)}<br>반만 이겨도 12판쯤 하면 티어가 한 칸 올라요(300점). 사람이 많은 방일수록 더 빨리!</p>
     <h3 class="jua">들어갈 수 있는 방</h3>
     <div class="rooms">${rooms}</div>
+    ${playingRooms.length ? `<h3 class="jua">게임 중인 방 <small class="sub">눌러서 구경</small></h3><div class="rooms">${playingRooms.map((r) => `<button class="roomrow play" data-action="spec" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.short ? '짧은 판' : '12라운드'} · 사람 ${r.n}명</small></span><em>👀 구경</em></button>`).join('')}</div>` : ''}
     <div class="lobbybtns">
       <button class="btn gold" data-action="quickjoin">⚡ 빠른 입장</button>
       <button class="btn" data-action="mkroom" data-short="0">＋ 방 만들기 (12라운드)</button>
@@ -1514,7 +1607,7 @@ function roomHtml(): string {
   }
   const left = o.autoAt === null ? null : o.autoAt - Date.now();
   const auto = left === null ? '' : `<div class="hl autostart">⏳ 자동 시작까지 <b class="jua nc-auto">${fmtLeft(left)}</b></div>`;
-  const seatHtml = (s: RoomInfo['seats'][number], i: number) => `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${tierBadge(s.points, true)}${s.teacher ? '<em>선생님</em>' : ''}${i === r.host ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`;
+  const seatHtml = (s: RoomInfo['seats'][number], i: number) => `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b>${s.title ? `<small class="ttl">${esc(titleName(s.title))}</small>` : ''}<small>${esc(s.schoolName)}</small>${tierBadge(s.points, true)}${s.teacher ? '<em>선생님</em>' : ''}${i === r.host ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`;
   const humans = r.seats.filter((s) => !s.bot).length;
   const host = o.you === r.host;
   const seats = Array.from({ length: r.size }, (_, i) => r.seats[i]);
@@ -1540,7 +1633,7 @@ function rankHtml(m: Extract<Modal, { type: 'rank' }>): string {
   const list = rankRows === null
     ? '<div class="sub">불러오는 중…</div>'
     : rankRows.length
-      ? `<ol class="ranklist">${rankRows.map((r, i) => `<li class="${a && r.nick === a.nick ? 'me' : ''}"><span class="no">${i + 1}</span>${tierBadge(r.points, true)}<b>${esc(r.nick)}</b><small>${esc(r.schoolName)}</small><span class="pts">${r.points}점</span></li>`).join('')}</ol>`
+      ? `<ol class="ranklist">${rankRows.map((r, i) => `<li class="${a && r.nick === a.nick ? 'me' : ''}"><span class="no">${i + 1}</span>${tierBadge(r.points, true)}<b>${esc(r.nick)}</b>${r.title ? `<small class="ttl">${esc(titleName(r.title))}</small>` : ''}<small>${esc(r.schoolName)}</small><span class="pts">${r.points}점</span></li>`).join('')}</ol>`
       : '<div class="sub">아직 랭크 판을 한 친구가 없어요.</div>';
   return `<div class="modal"><div class="box rankbox">
     <button class="btn small ghost close" data-action="rankback" style="float:right">← 뒤로</button>
@@ -1570,6 +1663,178 @@ function onlineFinalHtml(f: FinalPlace[]): string {
   const ta = rankTier(mine.after);
   const change = ta.index > tb.index ? `🎉 승급! ${tb.label} → <b>${ta.label}</b>` : ta.index < tb.index ? `${tb.label} → ${ta.label}. 다음 판에 다시 올라가요!` : ta.div !== tb.div ? `${tb.label} → <b>${ta.label}</b>` : `${ta.label} 그대로`;
   return `<div class="hl finals">${rows}</div><div class="hl tip">🏆 ${change} · ${mine.before}점 → <b>${mine.after}점</b></div>`;
+}
+
+// ---------------- 리그 꾸미기 · 선생님 학습 지표 ----------------
+/** 판 테마: 배경과 칸 색만 바뀜(게임 힘은 그대로) */
+function applyTheme() {
+  let id = myRecord()?.theme || '';
+  try {
+    id = id || localStorage.getItem('nc-theme') || '';
+  } catch {
+    /* 무시 */
+  }
+  const th = themeById(id);
+  const root = document.documentElement.style;
+  root.setProperty('--bg1', th.bg[0]);
+  root.setProperty('--bg2', th.bg[1]);
+  root.setProperty('--cellA', th.cell[0]);
+  root.setProperty('--cellB', th.cell[1]);
+}
+function myProfile(): Profile {
+  const r = myRecord();
+  return {
+    games: r?.games ?? 0, firsts: r?.firsts ?? 0, ranked: r?.ranked ?? 0, bestPoints: Math.max(r?.bestPoints ?? 0, r?.points ?? 0),
+    tutorial: !!r?.tutorial || tutorialDoneLocal(), bestChorus: r?.bestChorus?.count ?? 0, met: r?.collection.met?.length ?? 0,
+    three: r?.collection.three?.length ?? 0, morphs: r?.collection.morphs?.length ?? 0,
+  };
+}
+function decoHtml(): string {
+  const r = myRecord();
+  const prof = myProfile();
+  const open = new Set(unlockedTitles(prof));
+  const cur = r?.title ?? '';
+  const curTheme = themeById(r?.theme || (() => { try { return localStorage.getItem('nc-theme'); } catch { return null; } })()).id;
+  const titles = TITLES.map((t) => `<button class="tchip ${cur === t.id ? 'on' : ''} ${open.has(t.id) ? '' : 'locked'}" data-action="settitle" data-id="${t.id}" ${open.has(t.id) && getAuth() ? '' : 'disabled'}><b>${esc(t.name)}</b><small>${open.has(t.id) ? (cur === t.id ? '달고 있어요' : '눌러서 달기') : `🔒 ${esc(t.how)}`}</small></button>`).join('');
+  const themes = THEMES.map((th) => {
+    const ok = themeUnlocked(prof, th.id);
+    const tier = TIERS.find((x) => x.id === th.tier)!;
+    return `<button class="theme ${curTheme === th.id ? 'on' : ''}" data-action="settheme" data-id="${th.id}" ${ok ? '' : 'disabled'} style="background:linear-gradient(${th.bg[0]},${th.bg[1]})"><span class="sw" style="background:linear-gradient(${th.cell[0]},${th.cell[1]})"></span><b>${esc(th.name)}</b><small>${ok ? (curTheme === th.id ? '쓰는 중' : '눌러서 쓰기') : `🔒 ${tier.icon} ${tier.name}`}</small></button>`;
+  }).join('');
+  return `<div class="modal"><div class="box deco">
+    <button class="btn small ghost close" data-action="closedeco" style="float:right">닫기</button>
+    <h2>🎨 리그 꾸미기</h2>
+    <p class="sub">칭호와 판 테마는 보이는 것만 바뀌어요(게임 힘은 똑같아요). ${getAuth() ? '' : '들어가기를 하면 칭호를 달고 다른 기기에서도 그대로 써요.'}</p>
+    <h3 class="jua">🏷 칭호 <small class="sub">이름 옆에 붙어요 · ${open.size}/${TITLES.length}개 열림</small></h3>
+    <div class="tchips">${cur ? '<button class="tchip" data-action="settitle" data-id=""><b>칭호 떼기</b><small>이름만</small></button>' : ''}${titles}</div>
+    <h3 class="jua">🖼 판 테마 <small class="sub">티어에 오르면 열려요(한 번 가 본 티어면 그대로)</small></h3>
+    <div class="themes">${themes}</div>
+  </div></div>`;
+}
+let classRows: ClassRow[] | null = null;
+function teachHtml(): string {
+  const rows = classRows;
+  const n = rows?.length ?? 0;
+  const avg = (f: (r: ClassRow) => number) => (n ? (rows!.reduce((s, r) => s + f(r), 0) / n).toFixed(1) : '0');
+  const body = rows === null
+    ? '<p class="sub">불러오는 중…</p>'
+    : n
+      ? `<div class="hl">학생 <b>${n}명</b> · 튜토리얼 마침 ${rows.filter((r) => r.tutorial).length}명 · 평균 ${avg((r) => r.games)}판 · 퀴즈 평균 ${avg((r) => r.quiz)}/3 · 말풍선 평균 ${avg((r) => r.tips)}/16 · 숫자 변신 평균 ${avg((r) => r.morphs)}가지</div>
+        <div class="ttable"><table><thead><tr><th>닉네임</th><th>판</th><th>1등</th><th>티어</th><th>튜토리얼·퀴즈</th><th title="처음 보는 순간 말풍선(멈춤=나눗셈, 세모=3의 배수 등)">본 개념</th><th title="한 박에 함께 노래한 친구 수(약수·공배수)">최고 합창</th><th title="숫자 돌로 바꿔 본 숫자(+1·−1·×2·÷2…)">변신</th><th>도감</th><th>마지막</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td><b>${esc(r.nick)}</b></td><td>${r.games}</td><td>${r.firsts}</td><td>${r.ranked ? tierBadge(r.points, true) : '-'}</td><td>${r.tutorial ? '✅' : '·'} ${r.quiz}/3</td><td>${r.tips}/16</td><td>${r.bestChorus ? `${r.bestChorus}명 (${r.chorusBeat}박)` : '-'}</td><td>${r.morphs}</td><td>${r.met}/25 · 3성 ${r.three}</td><td><small>${r.updated ? new Date(r.updated).toLocaleDateString('ko-KR') : '-'}</small></td></tr>`).join('')}
+        </tbody></table></div>
+        <p><button class="btn ghost" data-action="classcsv">⬇ 표 내려받기 (CSV)</button></p>`
+      : '<p class="sub">아직 우리 학교 기록이 없어요.</p>';
+  return `<div class="modal"><div class="box teach">
+    <button class="btn small ghost close" data-action="closeteach" style="float:right">닫기</button>
+    <h2>📊 우리 학교 학습 지표</h2>
+    <p class="sub">학생마다 판 수, 튜토리얼·퀴즈, 처음 본 개념(말풍선), 가장 큰 합창(약수·공배수), 숫자 변신(사칙연산) 경험을 봐요. 이 화면을 열 때만 서버에서 읽어요.</p>
+    ${body}
+  </div></div>`;
+}
+function downloadClassCsv() {
+  if (!classRows?.length) return;
+  const head = ['닉네임', '판', '1등', '랭크점수', '랭크판', '튜토리얼', '퀴즈', '본말풍선', '최고합창', '합창박', '변신', '만난친구', '3성', '마지막'];
+  const lines = classRows.map((r) => [r.nick, r.games, r.firsts, r.points, r.ranked, r.tutorial ? 'O' : '', r.quiz, r.tips, r.bestChorus, r.chorusBeat, r.morphs, r.met, r.three, r.updated ? new Date(r.updated).toLocaleDateString('ko-KR') : ''].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
+  const blob = new Blob(['﻿' + [head.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = '숫자체스_학습지표.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+// ---------------- 관전(구경하기) ----------------
+// 서버는 라운드 결과(모두의 보드·짝·카드·몬스터)만 보내고, 장면은 이 기기에서 다시 계산한다.
+let playingRooms: PlayingRoom[] = [];
+let spec: { conn: RoomConn; info: SpecInfo | null; watching: { round: number; i: number } | null; watchers: number } | null = null;
+
+function specFights(m: RoundMsg): { a: number; b: number; label: string }[] {
+  const names = spec?.info?.names ?? [];
+  if (m.monster) return names.map((_, i) => ({ a: i, b: -1, label: `${names[i]} vs 👾 ${m.monster!.name}` }));
+  return (m.pairs ?? []).map((p) => ({ a: p.a, b: p.b, label: `${names[p.a]} vs ${p.mirror ? '거울 ' : ''}${names[p.b]}` }));
+}
+function startSpec(id: string) {
+  clearInterval(lobbyTimer);
+  spec?.conn.stop();
+  const s: NonNullable<typeof spec> = { conn: null as unknown as RoomConn, info: null, watching: null, watchers: 0 };
+  spec = s;
+  s.conn = new RoomConn(id, (m) => onSpec(s, m), (st, why) => {
+    if (spec !== s) return;
+    if (st === 'closed') {
+      if (why === 'not_playing' || why === 'lost') toast(why === 'lost' ? '연결이 끊겼어요.' : '이미 끝난 게임이에요.');
+      stopSpec();
+      openLobby();
+      render();
+    }
+  }, () => 0, true);
+  modal = null;
+}
+function stopSpec() {
+  spec?.conn.stop();
+  spec = null;
+  battle?.stop();
+  battle = null;
+}
+function onSpec(s: NonNullable<typeof spec>, m: ServerMsg) {
+  if (spec !== s) return;
+  if (m.t === 'spec') s.info = m.info;
+  else if (m.t === 'round' && s.info) {
+    s.info.results.push(m);
+    s.info.round = m.round + 1;
+    if (!battle) playSpecFight(m.round, 0); // 새 라운드: 첫 대결부터 보여 줌
+  } else if (m.t === 'watchers') s.watchers = m.n;
+  else if (m.t === 'emote') showEmote(m.nick, m.id, false);
+  else if (m.t === 'error') toast(m.error);
+  render();
+}
+function playSpecFight(round: number, i: number) {
+  const info = spec?.info;
+  const m = info?.results.find((x) => x.round === round);
+  const f = m && specFights(m)[i];
+  if (!info || !m || !f) return;
+  const boardB = f.b < 0 ? m.monster!.board : m.boards[f.b];
+  const result = runBattle(m.boards[f.a], boardB, { config: ruleConfig(info.rule), mods: [modsOf(m.cards[f.a]), f.b < 0 ? undefined : modsOf(m.cards[f.b])], log: true, frames: true });
+  battle?.stop();
+  spec!.watching = { round, i };
+  battle = new BattleView({
+    result, side: 0, myName: info.names[f.a], oppName: f.b < 0 ? m.monster!.name : info.names[f.b],
+    onDone: () => {
+      battle?.stop();
+      battle = null;
+      render();
+    },
+  });
+}
+function specHtml(): string {
+  const s = spec!;
+  const info = s.info;
+  if (!info) return `<div class="modal"><div class="box"><h2>👀 구경하러 가는 중…</h2><p><button class="btn ghost" data-action="specleave">나가기</button></p></div></div>`;
+  const last = info.results.at(-1);
+  const medals = last?.medals ?? info.names.map(() => 0);
+  const order = info.names.map((_, i) => i).sort((a, b) => medals[b] - medals[a]);
+  const rule = ruleById(info.rule);
+  const fin = last?.final;
+  const rows = order.map((i, k) => {
+    const cards = (last?.cards?.[i] ?? []).map((c) => cardById(c)?.icon ?? '').join('');
+    const team = info.teams ? `<small class="dtag">${i < 2 ? '🔵' : '🔴'} 팀</small>` : '';
+    const f = fin?.find((x) => x.seat === i);
+    return `<div class="srow"><b class="jua">${k + 1}</b><span>${esc(info.names[i])}</span>${team}${info.bots.includes(i) ? '<small class="dtag">컴퓨터</small>' : tierBadge(f?.after ?? info.points[i], true)}<small class="ctag">${cards}</small><b class="jua sm">🏅${medals[i]}</b>${f && !f.bot ? `<small class="${f.delta >= 0 ? 'up' : 'down'}">${f.delta > 0 ? '+' : ''}${f.delta}점</small>` : ''}</div>`;
+  }).join('');
+  const fights = info.results.slice().reverse().slice(0, 3).map((m) => `<div class="sfights"><b>${m.round}라운드 ${m.monster ? '몬스터' : '친구 대결'}</b>${specFights(m).map((f, i) => `<button class="btn small ${s.watching?.round === m.round && s.watching.i === i ? 'on' : 'ghost'}" data-action="specfight" data-r="${m.round}" data-i="${i}">▶ ${esc(f.label)}</button>`).join('')}</div>`).join('');
+  return `<div class="app specapp ${battle ? 'battling' : ''}">
+    <header class="top">
+      <div class="round"><b class="jua" style="font-size:20px">👀 구경 중</b> <span class="sub">${esc(info.title)} · ${fin ? '게임 끝' : `${Math.min(info.round, info.short ? 8 : 12)}라운드`}</span></div>
+      ${rule ? `<span class="tag rulechip">${rule.icon}<span class="rn"> ${esc(rule.name)}</span></span>` : ''}
+      <span class="sub">👀 ${s.watchers}명</span>
+      <button class="btn small ghost" data-action="emotes">😀</button>
+      <button class="btn small ghost ready" data-action="specleave">나가기</button>
+    </header>
+    <aside class="panel left"><div class="ptitle">순위 <small>메달 · 마법 카드</small></div>${rows}${fin ? '<p class="sub">게임이 끝났어요!</p>' : ''}</aside>
+    <section class="center">${battle ? '<div class="panel bv-host" id="bvhost"></div>' : `<div class="panel">${fights || '<p class="sub">아직 끝난 라운드가 없어요. 첫 라운드가 끝나면 대결을 볼 수 있어요.</p>'}</div>`}</section>
+    <aside class="panel right"><div class="ptitle">구경하는 법</div><p class="sub">라운드가 끝날 때마다 그 라운드 대결을 볼 수 있어요. 아무 대결이나 눌러 보세요. 스티커로 응원할 수 있어요.</p>${emotePicker ? emoteRow() : ''}</aside>
+  </div>
+  ${toastMsg ? `<div class="toast">${esc(toastMsg)}</div>` : ''}`;
 }
 
 // ---------------- 처음 보는 순간 · 수학 수첩 ----------------
@@ -1738,7 +2003,7 @@ function tutorialAction(a: string, el: HTMLElement) {
       /* 무시 */
     }
     const tips = pendingTips();
-    void saveProgress({ tutorialDone: true, tips }).then((r) => {
+    void saveProgress({ tutorialDone: true, tips, quiz: tut?.quiz?.score ?? 0 }).then((r) => {
       if (r.ok) {
         setLocalRecord(r.record);
         clearPending(tips);
@@ -1865,9 +2130,11 @@ app.addEventListener('drop', (ev) => {
 });
 
 bindLoginInputs(app);
+applyTheme();
 resumeOnline(); // 새로고침 전에 하던 온라인 대결이 있으면 이어서
 void refreshMe().then(() => {
   mergeSeen(myRecord()?.tips ?? []);
+  applyTheme();
   render();
 });
 render();

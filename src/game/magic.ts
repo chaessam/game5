@@ -16,9 +16,9 @@ export interface WeeklyRule {
 
 export const WEEKLY_RULES: WeeklyRule[] = [
   { id: 'chorus', icon: '🎵', name: '합창 축제', text: '합창이 더 세져요: 2명 1.75배 · 3명 2.25배 · 4명 이상 2.5배', config: { chorusPct: [100, 100, 175, 225, 250] } },
-  { id: 'prime', icon: '💎', name: '다이아 주간', text: '다이아 친구만 노래하면 배율 +0.25 (2명 2배 · 4명 2.25배 · 7명 2.5배)', config: { primeSongPct: [100, 200, 225, 250] } },
+  { id: 'prime', icon: '💎', name: '다이아 주간', text: '다이아 친구가 덜 아파요: 2명 8% · 4명 15% · 7명 25%(보통은 5·10·20%)', config: { primeReducePct: [0, 8, 15, 25] } },
   { id: 'tri', icon: '🔺', name: '세모 방패 주간', text: '세모 방패가 두꺼워져요: 3명 40 · 5명 70 · 7명 110', config: { triShield: [0, 40, 70, 110] } },
-  { id: 'five', icon: '✋', name: '하이파이브 주간', text: '하이파이브 공격이 더 올라가요: 2명 +6 · 4명 +12 · 6명 +18', config: { fiveAtk: [0, 6, 12, 18] } },
+  { id: 'five', icon: '✋', name: '하이파이브 주간', text: '하이파이브 공격이 더 올라가요: 2명 +5 · 4명 +10 · 6명 +15', config: { fiveAtk: [0, 5, 10, 15] } },
   { id: 'even', icon: '👯', name: '짝꿍 주간', text: '짝수 박 짝! 추가타가 세져요: 2명 45% · 4명 90% · 6명 150%', config: { evenExtraPct: [0, 45, 90, 150] } },
   { id: 'rich', icon: '👑', name: '부자 주간', text: '부자 꼬마가 커져요: 3명 3분의 1 · 5명 절반 · 7명 3분의 2', config: { richPower: [[0, 1], [1, 3], [1, 2], [2, 3]] } },
   { id: 'hot', icon: '🔥', name: '뜨거운 박자 주간', text: '30박부터 기본 공격 2.5배(보통은 36박부터) — 빨리 끝나요', config: { hotBeatFrom: 30 } },

@@ -68,7 +68,7 @@ button, .cell, .card, .sb, a { touch-action: manipulation; }
 .opp { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; }
 .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px 8px; padding: 10px 12px; }
 .rowlabel { grid-column: 1 / -1; font-size: 12px; color: var(--muted); margin: -4px 0 -2px; }
-.cell { aspect-ratio: 1.8; border-radius: 14px; border: 2px dashed rgba(175, 155, 255, .35); background: linear-gradient(180deg, rgba(130,110,255,.12), rgba(70,45,170,.25)); display: grid; place-items: center; position: relative; min-height: 64px; }
+.cell { aspect-ratio: 1.8; border-radius: 14px; border: 2px dashed rgba(175, 155, 255, .35); background: linear-gradient(180deg, var(--cellA, rgba(130,110,255,.12)), var(--cellB, rgba(70,45,170,.25))); display: grid; place-items: center; position: relative; min-height: 64px; }
 .cell.front { border-color: rgba(255, 200, 120, .35); }
 .cell.target { border-color: var(--gold); border-style: solid; }
 .unit { width: 100%; height: 100%; border: 0; background: none; padding: 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 12px; position: relative; }
@@ -382,6 +382,8 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .rulebar span { color: #e6e2ff; }
 .rulechip { border: 1px solid rgba(127,211,255,.6); background: rgba(127,211,255,.15); color: #cfeeff; cursor: pointer; }
 .cardsb { white-space: nowrap; }
+.cardsb .cdn, .cardsb .cdr { display: none; }
+.cdrule { margin-top: 10px; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(127,211,255,.5); background: rgba(127,211,255,.1); }
 .embtag { font-size: 11px; font-weight: 800; color: #1d1440; background: #ffe27a; border-radius: 999px; padding: 0 6px; }
 .mcard { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .mcard .mi { font-size: 40px; line-height: 1.1; }
@@ -398,6 +400,36 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .scout .ctag { font-size: 11px; letter-spacing: -2px; }
 .teamend { font-size: 20px; text-align: center; } .teamend.win { color: var(--good); } .teamend.loss { color: var(--bad); }
 .teamend b { font-size: 26px; margin-left: 6px; }
+
+/* 관전 */
+.roomrow.play em { color: #9fe0ff; }
+.srow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 5px 4px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.srow > span:first-of-type { flex: 1; min-width: 60px; font-weight: 800; }
+.srow .sm { font-size: 15px; }
+.srow .up { color: var(--good); font-weight: 800; } .srow .down { color: var(--bad); font-weight: 800; }
+.sfights { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.sfights b { color: var(--gold); }
+.sfights .btn { text-align: left; }
+.watchn { white-space: nowrap; }
+
+/* 리그 꾸미기 · 학습 지표 */
+.ttl { display: inline-block; font-size: 11px; font-weight: 800; color: #1d1440; background: linear-gradient(90deg, #ffe27a, #ffb84d); border-radius: 999px; padding: 0 7px; margin: 0 2px; }
+.tchips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 6px 0 12px; }
+.tchip { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; border: 2px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.06); padding: 6px 10px; }
+.tchip b { font-size: 14px; } .tchip small { font-size: 11px; color: var(--muted); }
+.tchip.on { border-color: var(--gold); background: rgba(255,197,49,.15); }
+.tchip.locked { opacity: .5; }
+.themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.theme { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 3px solid var(--line); border-radius: 14px; padding: 8px; color: #fff; }
+.theme .sw { width: 70%; height: 26px; border-radius: 8px; border: 2px dashed rgba(255,255,255,.4); }
+.theme small { font-size: 11px; opacity: .85; }
+.theme.on { border-color: var(--gold); }
+.theme:disabled { opacity: .45; }
+.teach .box, .box.teach { width: min(1100px, 100%); }
+.ttable { overflow: auto; max-height: 55vh; border-radius: 10px; border: 1px solid var(--line); }
+.ttable table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.ttable th, .ttable td { padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: left; }
+.ttable th { position: sticky; top: 0; background: #2a2170; font-size: 12px; }
 
 /* 휴대폰에서만 보이는 것 */
 .synstrip, .inc-m, .brk, .minibar { display: none; }
@@ -518,8 +550,15 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .otimer { display: none; }
   .rulechip .rn, .teamscore small { display: none; }
   .cardsb { order: 4; padding: 4px 6px; font-size: 12px; }
+  .cardsb .cdi, .watchn { display: none; }
+  /* 온라인·팀전: 규칙 칩은 카드 버튼에 합치고(카드 판에 규칙도 보임), 라운드 꼬리표는 '이번 상대' 줄이 대신 */
+  .cardsb .cdr { display: inline; margin-right: 2px; }
+  .top:has(.cardsb) .rulechip, .top:has(.emob) .round .tag, .top:has(.teamscore) .round .tag, .top:has(.cardsb) .inc-m .nx { display: none; }
+  .top:has(.cardsb), .top:has(.emob) { column-gap: 5px; }
+  .top:has(.cardsb) .nb, .top:has(.emob) .nb { padding: 4px 6px; }
+  .cardsb .cdn { display: inline; font-weight: 700; margin-left: 2px; }
   .rulechip { order: 4; }
-  .emob { order: 4; padding: 4px 8px; }
+  .emob { order: 4; padding: 4px 6px; }
   .emopanel { top: 64px; }
   #nc-emotes { top: 70px; right: 6px; }
   .emote { font-size: 12px; }
@@ -564,4 +603,8 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .bv-say svg { width: 40px; height: 40px; }
   .bv-say .txt { font-size: 14px; }
   .bv-log { min-height: 0; max-height: 62px; overflow: hidden; font-size: 11.5px; padding: 3px 8px; }
+}
+@media (max-width: 374px) {
+  /* 작은 휴대폰: 붐비는 위 막대는 '다음 수입'과 카드 버튼의 규칙 그림을 빼서 두 줄로 */
+  .top:has(.cardsb) .cardsb .cdr, .top:has(.cardsb) .inc-m { display: none; }
 }

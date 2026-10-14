@@ -3,7 +3,7 @@
 // 빈자리 컴퓨터(보통)는 방장 기기가 대신 두고 보드를 함께 보낸다(서버 계산 없음). 점수는 사람끼리 등수로.
 import { DurableObject } from 'cloudflare:workers';
 import type { BoardUnit } from '../src/engine/types';
-import { advance, createOnlineGame, currentPlan, deserializeGame, pairings, ranking, resolveRound, serializeGame } from '../src/game/game';
+import { advance, createOnlineGame, currentPlan, deserializeGame, monsterFor, pairings, ranking, resolveRound, serializeGame } from '../src/game/game';
 import type { GameState } from '../src/game/types';
 import { cleanBoard, validBoard } from '../src/shared/board';
 import { ruleOfWeek, validCards } from '../src/game/magic';
@@ -18,9 +18,10 @@ interface Seat extends Who {
   left?: boolean;
   bot?: boolean;
 }
-type Tag = { school: string; nick: string };
+type Tag = { school: string; nick: string; spec?: boolean };
 interface RoomState {
   id: string;
+  title?: string;
   short: boolean;
   size: number;
   status: RoomStatus;
@@ -83,7 +84,11 @@ export class Room extends DurableObject<Env> {
   }
   seatOf(ws: WebSocket): number {
     const t = this.tagOf(ws);
-    return t && this.st ? this.st.seats.findIndex((s) => !s.bot && same(s, t)) : -1;
+    return t && !t.spec && this.st ? this.st.seats.findIndex((s) => !s.bot && same(s, t)) : -1;
+  }
+  /** 구경하는 연결 */
+  watchers(): WebSocket[] {
+    return this.open().filter((ws) => this.tagOf(ws)?.spec);
   }
   /** 열려 있는 연결(닫히는 중인 것 빼고) */
   open(): WebSocket[] {
@@ -93,7 +98,7 @@ export class Room extends DurableObject<Env> {
     const s = this.st?.seats[i];
     return !!s && !s.bot && this.open().some((ws) => {
       const t = this.tagOf(ws);
-      return !!t && same(t, s);
+      return !!t && !t.spec && same(t, s);
     });
   }
   send(ws: WebSocket, m: ServerMsg) {
@@ -112,7 +117,7 @@ export class Room extends DurableObject<Env> {
       id: st.id, short: st.short, size: st.size, status: st.status, host: st.host, fill: st.fill, teams: !!st.teams,
       autoInMs: st.status === 'wait' && st.autoAt ? Math.max(0, st.autoAt - Date.now()) : null,
       seats: st.seats.map((s, i) => ({
-        nick: s.nick, schoolName: s.schoolName, points: s.points, online: s.bot ? true : this.online(i) && !s.left,
+        nick: s.nick, schoolName: s.schoolName, points: s.points, online: s.bot ? true : this.online(i) && !s.left, ...(s.title ? { title: s.title } : {}),
         ...(s.bot ? { bot: true } : {}), ...(s.teacher ? { teacher: true } : {}),
       })),
     };
@@ -134,6 +139,15 @@ export class Room extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     this.ctx.acceptWebSocket(server);
+    if (req.headers.get('x-spec') === '1') {
+      server.serializeAttachment({ school: who.school, nick: who.nick, spec: true } satisfies Tag);
+      const err = await this.ctx.blockConcurrencyWhile(() => this.watch(server));
+      if (err) {
+        this.send(server, { t: 'error', code: err[0], error: err[1] });
+        server.close(1000, err[0]);
+      }
+      return new Response(null, { status: 101, webSocket: client });
+    }
     server.serializeAttachment({ school: who.school, nick: who.nick } satisfies Tag);
     // 같은 순간 여러 친구가 들어와도 방이 두 번 만들어지지 않게 한 번에 하나씩
     const err = await this.ctx.blockConcurrencyWhile(() => this.join(who!, id, server));
@@ -144,6 +158,22 @@ export class Room extends DurableObject<Env> {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  /** 구경하기: 게임 중인 방만. 지금까지의 라운드 결과를 한 번에 보냄(서버 계산 없음) */
+  async watch(ws: WebSocket): Promise<[string, string] | null> {
+    const st = await this.load();
+    if (!st || st.status !== 'play') return ['not_playing', '지금 게임 중인 방이 아니에요.'];
+    if (this.watchers().length > 30) return ['full', '구경하는 친구가 너무 많아요.'];
+    this.send(ws, {
+      t: 'spec',
+      info: {
+        title: st.title ?? '', short: st.short, names: st.seats.map((s) => s.nick), points: st.seats.map((s) => s.points), bots: st.bots,
+        rule: st.rule ?? null, teams: !!st.teams, round: st.round, results: st.results,
+      },
+    });
+    this.broadcast({ t: 'watchers', n: this.watchers().length });
+    return null;
+  }
+
   /** 들어오기(처음·다시 연결). 문제가 있으면 [코드, 안내] */
   async join(who: Who, id: string, ws: WebSocket): Promise<[string, string] | null> {
     let st = await this.load();
@@ -151,7 +181,7 @@ export class Room extends DurableObject<Env> {
       const info = await this.store().roomInfo(id);
       if (!info) return ['no_room', '없어진 방이에요. 방 목록을 새로 고쳐 봐요.'];
       st = this.st = {
-        id, short: info.short, size: info.size, status: 'wait', host: 0,
+        id, title: info.title, short: info.short, size: info.size, status: 'wait', host: 0,
         seats: [], fill: true, autoAt: null,
         seed: 0, game: '', round: 0, bots: [], driver: 0, ranked: false, boards: [], last: [], deadline: 0, results: [],
       };
@@ -207,6 +237,15 @@ export class Room extends DurableObject<Env> {
       return;
     }
     const seat = this.seatOf(ws);
+    const tag = this.tagOf(ws);
+    if (seat < 0 && tag?.spec && m.t === 'emote') {
+      const id = Number(m.id);
+      const key = `spec:${tag.school}/${tag.nick}`;
+      if (!(id >= 0 && id < EMOTES.length) || Date.now() - (this.lastEmote.get(key) ?? 0) < ONLINE.emoteGapMs) return;
+      this.lastEmote.set(key, Date.now());
+      this.broadcast({ t: 'emote', seat: -1, nick: `👀 ${tag.nick}`, id });
+      return;
+    }
     if (seat < 0) return;
     switch (m.t) {
       case 'hello':
@@ -295,6 +334,10 @@ export class Room extends DurableObject<Env> {
   async onClose(ws: WebSocket) {
     const st = await this.load();
     if (!st) return;
+    if (this.tagOf(ws)?.spec) {
+      this.broadcast({ t: 'watchers', n: this.watchers().filter((w) => w !== ws).length });
+      return;
+    }
     // 기다리는 방에서 나가면 자리 비움(다시 들어올 수 있음). 게임 중에는 자리를 두고 지난 보드로 계속
     if (st.status === 'wait') {
       const seat = this.seatOf(ws);
@@ -366,11 +409,12 @@ export class Room extends DurableObject<Env> {
     st.deadline = Date.now() + ONLINE.firstPrepMs;
     await this.ctx.storage.setAlarm(st.deadline + ONLINE.graceMs);
     await this.save();
-    await this.store().roomRemove(st.id); // 시작한 방은 목록에서 빠짐
+    await this.store().roomPlaying(st.id, keep.length); // 목록에서 '게임 중(구경하기)'으로
     const names = st.seats.map((s) => s.nick);
     const points = st.seats.map((s) => s.points);
+    const titles = st.seats.map((s) => s.title ?? '');
     this.broadcast((you) => ({
-      t: 'start', seed: st.seed, short: st.short, names, points, you, monsterIndex: g.monsterIndex, remainMs: ONLINE.firstPrepMs,
+      t: 'start', seed: st.seed, short: st.short, names, points, titles, you, monsterIndex: g.monsterIndex, remainMs: ONLINE.firstPrepMs,
       bots: st.bots, driver: st.driver, ranked: st.ranked, rule: st.rule ?? null, teams: !!st.teams,
     }));
   }
@@ -382,6 +426,7 @@ export class Room extends DurableObject<Env> {
     const g = deserializeGame(st.game);
     const boards = st.seats.map((_, i) => st.boards[i] ?? st.last[i] ?? []);
     const pairs = currentPlan(g).kind === 'pvp' ? pairings(g) : undefined;
+    const monster = currentPlan(g).kind === 'pve' ? monsterFor(g) : undefined;
     const round = g.round;
     const cards = st.seats.map((_, i) => st.cards?.[i] ?? []);
     resolveRound(g, { boards, cards, light: true });
@@ -390,10 +435,11 @@ export class Room extends DurableObject<Env> {
     st.last = boards;
     st.boards = [];
     const over = g.phase === 'over';
-    const msg: RoundMsg = { t: 'round', round, boards, pairs, cards, medals: g.players.map((p) => p.medals), next: over ? null : { monsterIndex: g.monsterIndex, remainMs: ONLINE.prepMs } };
+    const msg: RoundMsg = { t: 'round', round, boards, pairs, cards, ...(monster ? { monster } : {}), medals: g.players.map((p) => p.medals), next: over ? null : { monsterIndex: g.monsterIndex, remainMs: ONLINE.prepMs } };
     if (over) {
       st.status = 'done';
       msg.final = await this.finish(g);
+      await this.store().roomRemove(st.id);
       await this.ctx.storage.setAlarm(Date.now() + 10 * 60_000); // 10분 뒤 방 정리
     } else {
       st.round = g.round;

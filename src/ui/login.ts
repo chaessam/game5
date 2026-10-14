@@ -3,6 +3,7 @@ import { countSameName, indexSchools, placeOf, searchSchools, shortSchool, type 
 import { identityError, normalizeNick, pinOk } from '../shared/identity';
 import { getAuth, login, logout, me, type MyRecord } from '../net/api';
 import { rankTier } from '../shared/rank';
+import { titleName } from '../shared/cosmetics';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const store = {
@@ -60,7 +61,7 @@ export async function refreshMe(): Promise<void> {
 export function loginBoxHtml(): string {
   const a = getAuth();
   if (a) {
-    return `<div class="loginbox in"><span>🏫 <b>${esc(shortSchool(a.schoolName))}</b> · <b>${esc(a.nick)}</b>${a.teacher ? ' <span class="tag">선생님</span>' : ''}</span>
+    return `<div class="loginbox in"><span>🏫 <b>${esc(shortSchool(a.schoolName))}</b> · <b>${esc(a.nick)}</b>${record?.title ? ` <small class="ttl">${esc(titleName(record.title))}</small>` : ''}${a.teacher ? ' <span class="tag">선생님</span>' : ''}</span>
       ${record ? `<span class="tier sm" style="--tc:${rankTier(record.points).color}">${rankTier(record.points).icon} ${rankTier(record.points).label}</span><span class="sub">${record.points}점 · 판 ${record.games} · 1등 ${record.firsts}${record.bestChorus ? ` · 최고 합창 ${record.bestChorus.count}명` : ''}</span>` : ''}
       <button class="btn small ghost" data-action="logout">나가기</button></div>`;
   }

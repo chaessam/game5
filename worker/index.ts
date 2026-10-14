@@ -9,7 +9,8 @@ import { SCHOOLS_PATH, indexSchools, shortSchool, type SchoolIndex } from '../sr
 import { UNITS } from '../src/engine/data';
 import { validBoard } from '../src/shared/board';
 import { rankDelta } from '../src/shared/rank';
-import { ROOM_ID, type LobbyRoom, type RankRow } from '../src/shared/online';
+import { THEMES, themeUnlocked, unlockedTitles, type Profile } from '../src/shared/cosmetics';
+import { ROOM_ID, type LobbyRoom, type PlayingRoom, type RankRow } from '../src/shared/online';
 import type { Env, Who } from './env';
 export { Room } from './room';
 
@@ -80,9 +81,12 @@ export default {
       // 방 연결: 비밀번호 대신 들어가기 표(token)로 누군지 확인한 뒤 방에 넘김(방은 표를 모름)
       if (request.headers.get('Upgrade') !== 'websocket') return json({ ok: false, error: 'websocket only' }, 426);
       try {
-        const who = await storeOf(env).whoIs(url.searchParams.get('t') || '');
+        const spec = url.searchParams.get('spec') === '1';
+        // 구경은 들어가지 않아도 됨(이름은 '구경꾼')
+        const who = (await storeOf(env).whoIs(url.searchParams.get('t') || '')) ?? (spec ? { school: '', nick: '구경꾼', schoolName: '', points: 0, teacher: false } : null);
         if (!who) return json({ ok: false, code: 'no_session', error: '먼저 들어가기를 해 주세요.' }, 401);
         const headers = new Headers(request.headers);
+        if (spec) headers.set('x-spec', '1');
         headers.set('x-who', encodeURIComponent(JSON.stringify(who))); // 한글 닉네임: 헤더는 ASCII만 안전
         headers.set('x-room', roomWs[1]);
         return await env.ROOM.get(env.ROOM.idFromName(roomWs[1])).fetch(new Request(request, { headers }));
@@ -113,10 +117,21 @@ interface MyRecord {
   collection: { met?: number[]; three?: number[]; morphs?: string[] };
   tutorial: boolean;
   tips: string[];
-  /** 랭크 점수 · 랭크 판 수 */
+  /** 랭크 점수 · 랭크 판 수 · 가 본 가장 높은 점수 */
   points: number;
   ranked: number;
+  bestPoints: number;
+  /** 리그 꾸미기: 고른 칭호·판 테마 */
+  title: string;
+  theme: string;
+  /** 튜토리얼 퀴즈 가장 좋은 점수(0~3) */
+  quiz: number;
 }
+/** 칭호·테마를 여는 데 쓰는 기록 */
+const profileOf = (r: MyRecord): Profile => ({
+  games: r.games, firsts: r.firsts, ranked: r.ranked, bestPoints: Math.max(r.bestPoints, r.points), tutorial: r.tutorial,
+  bestChorus: r.bestChorus?.count ?? 0, met: r.collection.met?.length ?? 0, three: r.collection.three?.length ?? 0, morphs: r.collection.morphs?.length ?? 0,
+});
 type Account = { school: string; nick: string; pin_hash: string; salt: string; fails: number; locked_until: number; last: number };
 
 export class Store extends DurableObject<Env> {
@@ -156,7 +171,7 @@ export class Store extends DurableObject<Env> {
         n INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, updated INTEGER NOT NULL
       );
     `);
-    // 방을 만든 학교 칸(우리 학교 방 표시). kind·members는 예전에 쓰던 칸(그대로 둠)
+    // 방을 만든 학교 칸(우리 학교 방 표시) · kind('room' 기다리는 중 / 'play' 게임 중 → 구경하기). members는 예전에 쓰던 칸(그대로 둠)
     const roomCols = this.sql.exec<{ name: string }>('PRAGMA table_info(rooms)').toArray().map((c) => c.name);
     if (!roomCols.includes('kind')) {
       this.sql.exec(`
@@ -172,6 +187,14 @@ export class Store extends DurableObject<Env> {
         ALTER TABLE records ADD COLUMN points INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE records ADD COLUMN ranked INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE records ADD COLUMN rank_firsts INTEGER NOT NULL DEFAULT 0;
+      `);
+    }
+    if (!cols.includes('title')) {
+      this.sql.exec(`
+        ALTER TABLE records ADD COLUMN best_points INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE records ADD COLUMN title TEXT NOT NULL DEFAULT '';
+        ALTER TABLE records ADD COLUMN theme TEXT NOT NULL DEFAULT '';
+        ALTER TABLE records ADD COLUMN quiz INTEGER NOT NULL DEFAULT 0;
       `);
     }
     this.sql.exec(`
@@ -213,6 +236,8 @@ export class Store extends DurableObject<Env> {
         return json(await this.listRooms(token));
       case 'POST /api/rooms':
         return json(await this.createRoom(token, body, ip));
+      case 'GET /api/class':
+        return json(await this.classStats(token));
       case 'GET /api/ranking':
         return json(await this.ranking(token, url.searchParams.get('scope') === 'school' ? 'school' : 'all'));
       default:
@@ -303,8 +328,11 @@ export class Store extends DurableObject<Env> {
 
   // ---- 내 기록: 한 사람 한 줄. 읽기 1줄 + 쓰기 1줄(UPSERT)로 끝내 무료 한도를 아낀다 ----
   readRecord(school: string, nick: string): MyRecord {
-    const r = this.sql.exec<Record<string, string | number>>('SELECT * FROM records WHERE school = ? AND nick = ?', school, nick).toArray()[0];
-    const empty: MyRecord = { games: 0, firsts: 0, medals: 0, bestMedals: 0, bestChorus: null, collection: {}, tutorial: false, tips: [], points: 0, ranked: 0 };
+    return this.parseRecord(this.sql.exec<Record<string, string | number>>('SELECT * FROM records WHERE school = ? AND nick = ?', school, nick).toArray()[0]);
+  }
+
+  parseRecord(r: Record<string, string | number> | undefined): MyRecord {
+    const empty: MyRecord = { games: 0, firsts: 0, medals: 0, bestMedals: 0, bestChorus: null, collection: {}, tutorial: false, tips: [], points: 0, ranked: 0, bestPoints: 0, title: '', theme: '', quiz: 0 };
     if (!r) return empty;
     const parse = <T>(v: unknown, d: T): T => {
       try {
@@ -317,19 +345,21 @@ export class Store extends DurableObject<Env> {
       games: Number(r.games), firsts: Number(r.firsts), medals: Number(r.medals), bestMedals: Number(r.best_medals),
       bestChorus: parse(r.best_chorus, null), collection: parse(r.collection, {}), tutorial: !!r.tutorial,
       tips: String(r.tips || '').split(',').filter(Boolean),
-      points: Number(r.points) || 0, ranked: Number(r.ranked) || 0,
+      points: Number(r.points) || 0, ranked: Number(r.ranked) || 0, bestPoints: Number(r.best_points) || 0,
+      title: String(r.title || ''), theme: String(r.theme || ''), quiz: Number(r.quiz) || 0,
     };
   }
 
   writeRecord(school: string, nick: string, r: MyRecord) {
     this.sql.exec(
-      `INSERT INTO records (school, nick, games, firsts, medals, best_medals, best_chorus, collection, tutorial, tips, updated)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO records (school, nick, games, firsts, medals, best_medals, best_chorus, collection, tutorial, tips, updated, title, theme, quiz)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (school, nick) DO UPDATE SET games = excluded.games, firsts = excluded.firsts, medals = excluded.medals,
          best_medals = excluded.best_medals, best_chorus = excluded.best_chorus, collection = excluded.collection,
-         tutorial = excluded.tutorial, tips = excluded.tips, updated = excluded.updated`,
+         tutorial = excluded.tutorial, tips = excluded.tips, updated = excluded.updated,
+         title = excluded.title, theme = excluded.theme, quiz = excluded.quiz`,
       school, nick, r.games, r.firsts, r.medals, r.bestMedals, r.bestChorus ? JSON.stringify(r.bestChorus) : '',
-      JSON.stringify(r.collection), r.tutorial ? 1 : 0, r.tips.slice(0, 60).join(','), Date.now(),
+      JSON.stringify(r.collection), r.tutorial ? 1 : 0, r.tips.slice(0, 60).join(','), Date.now(), r.title, r.theme, r.quiz,
     );
   }
 
@@ -340,8 +370,23 @@ export class Store extends DurableObject<Env> {
     for (const t of Array.isArray(body.tips) ? body.tips.slice(0, 30) : []) if (/^[a-z0-9_]{1,24}$/.test(String(t))) tips.add(String(t));
     r.tips = [...tips];
     const tut = r.tutorial || !!body.tutorialDone;
-    const changed = tut !== r.tutorial || r.tips.length !== before;
+    let changed = tut !== r.tutorial || r.tips.length !== before;
     r.tutorial = tut;
+    // 리그 꾸미기: 연 칭호·테마만 고를 수 있음
+    const prof = profileOf(r);
+    if (typeof body.title === 'string' && body.title !== r.title && (body.title === '' || unlockedTitles(prof).includes(body.title))) {
+      r.title = body.title;
+      changed = true;
+    }
+    if (typeof body.theme === 'string' && body.theme !== r.theme && THEMES.some((t) => t.id === body.theme) && themeUnlocked(prof, body.theme)) {
+      r.theme = body.theme;
+      changed = true;
+    }
+    const quiz = Math.max(0, Math.min(3, Math.floor(Number(body.quiz) || 0)));
+    if (quiz > r.quiz) {
+      r.quiz = quiz;
+      changed = true;
+    }
     return changed;
   }
 
@@ -440,18 +485,28 @@ export class Store extends DurableObject<Env> {
     const who = await this.accountOf(token);
     if (!who) return null;
     const school = (await loadSchools(this.env)).byCode.get(who.school);
-    const p = this.sql.exec<{ points: number }>('SELECT points FROM records WHERE school = ? AND nick = ?', who.school, who.nick).toArray()[0];
-    return { ...who, schoolName: school ? shortSchool(school.name) : '', points: Number(p?.points) || 0, teacher: isAdmin(who.school, who.nick) };
+    const p = this.sql.exec<{ points: number; title: string }>('SELECT points, title FROM records WHERE school = ? AND nick = ?', who.school, who.nick).toArray()[0];
+    return { ...who, schoolName: school ? shortSchool(school.name) : '', points: Number(p?.points) || 0, teacher: isAdmin(who.school, who.nick), title: String(p?.title || '') };
   }
 
   /** 기다리는 방 목록(시작한 방·오래된 방은 안 보임). 모든 학생·선생님이 같은 목록을 씀. 사람이 많은 방 먼저 */
-  async listRooms(token: string): Promise<{ ok: true; rooms: LobbyRoom[] }> {
+  async listRooms(token: string): Promise<{ ok: true; rooms: LobbyRoom[]; playing: PlayingRoom[] }> {
     const who = token ? await this.accountOf(token) : null;
+    const now = Date.now();
     const rows = this.sql.exec<{ id: string; title: string; n: number; size: number; short: number; school: string }>(
-      'SELECT id, title, n, size, short, school FROM rooms WHERE updated > ? AND n < size ORDER BY n DESC, updated DESC LIMIT 20',
-      Date.now() - 20 * 60_000,
+      "SELECT id, title, n, size, short, school FROM rooms WHERE kind != 'play' AND updated > ? AND n < size ORDER BY n DESC, updated DESC LIMIT 20",
+      now - 20 * 60_000,
     ).toArray();
-    return { ok: true, rooms: rows.map((r) => ({ id: r.id, title: r.title, n: r.n, size: r.size, short: !!r.short, mine: !!who && r.school === who.school })) };
+    // 게임 중인 방(구경하기): 시작한 지 30분 안
+    const play = this.sql.exec<{ id: string; title: string; n: number; short: number }>(
+      "SELECT id, title, n, short FROM rooms WHERE kind = 'play' AND updated > ? ORDER BY updated DESC LIMIT 10",
+      now - 30 * 60_000,
+    ).toArray();
+    return {
+      ok: true,
+      rooms: rows.map((r) => ({ id: r.id, title: r.title, n: r.n, size: r.size, short: !!r.short, mine: !!who && r.school === who.school })),
+      playing: play.map((r) => ({ id: r.id, title: r.title, n: r.n, short: !!r.short })),
+    };
   }
 
   async createRoom(token: string, body: Record<string, unknown>, ip: string) {
@@ -476,10 +531,14 @@ export class Store extends DurableObject<Env> {
   }
 
   /** 방(Room) → 저장소 RPC */
-  roomInfo(id: string): { short: boolean; size: number } | null {
+  roomInfo(id: string): { short: boolean; size: number; title: string } | null {
     if (!ROOM_ID.test(id)) return null;
-    const r = this.sql.exec<{ short: number; size: number }>('SELECT short, size FROM rooms WHERE id = ?', id).toArray()[0];
-    return r ? { short: !!r.short, size: r.size } : null;
+    const r = this.sql.exec<{ short: number; size: number; title: string }>('SELECT short, size, title FROM rooms WHERE id = ?', id).toArray()[0];
+    return r ? { short: !!r.short, size: r.size, title: r.title } : null;
+  }
+  /** 시작한 방: 목록에서 '게임 중(구경하기)'으로 */
+  roomPlaying(id: string, humans: number) {
+    this.sql.exec("UPDATE rooms SET kind = 'play', n = ?, updated = ? WHERE id = ?", humans, Date.now(), id);
   }
   roomUpdate(id: string, n: number) {
     this.sql.exec('UPDATE rooms SET n = ?, updated = ? WHERE id = ?', n, Date.now(), id);
@@ -496,10 +555,11 @@ export class Store extends DurableObject<Env> {
       const delta = rankDelta(x.place, x.players, before);
       const after = before + delta;
       this.sql.exec(
-        `INSERT INTO records (school, nick, points, ranked, rank_firsts, updated) VALUES (?, ?, ?, 1, ?, ?)
+        `INSERT INTO records (school, nick, points, ranked, rank_firsts, updated, best_points) VALUES (?, ?, ?, 1, ?, ?, ?)
          ON CONFLICT (school, nick) DO UPDATE SET points = excluded.points, ranked = records.ranked + 1,
-           rank_firsts = records.rank_firsts + excluded.rank_firsts, updated = excluded.updated`,
-        x.school, x.nick, after, x.place === 1 ? 1 : 0, Date.now(),
+           rank_firsts = records.rank_firsts + excluded.rank_firsts, updated = excluded.updated,
+           best_points = MAX(records.best_points, excluded.best_points)`,
+        x.school, x.nick, after, x.place === 1 ? 1 : 0, Date.now(), after,
       );
       return { before, after, delta };
     });
@@ -510,11 +570,29 @@ export class Store extends DurableObject<Env> {
     const who = await this.accountOf(token);
     if (scope === 'school' && !who) return { ok: false, code: 'no_session', error: '먼저 들어가기를 해 주세요.' };
     const rows = (scope === 'school'
-      ? this.sql.exec<{ school: string; nick: string; points: number; ranked: number }>('SELECT school, nick, points, ranked FROM records WHERE school = ? AND ranked > 0 ORDER BY points DESC LIMIT 30', who!.school)
-      : this.sql.exec<{ school: string; nick: string; points: number; ranked: number }>('SELECT school, nick, points, ranked FROM records WHERE ranked > 0 ORDER BY points DESC LIMIT 30')
+      ? this.sql.exec<{ school: string; nick: string; points: number; ranked: number; title: string }>('SELECT school, nick, points, ranked, title FROM records WHERE school = ? AND ranked > 0 ORDER BY points DESC LIMIT 30', who!.school)
+      : this.sql.exec<{ school: string; nick: string; points: number; ranked: number; title: string }>('SELECT school, nick, points, ranked, title FROM records WHERE ranked > 0 ORDER BY points DESC LIMIT 30')
     ).toArray();
     const idx = await loadSchools(this.env);
-    const list: RankRow[] = rows.map((r) => ({ nick: r.nick, schoolName: shortSchool(idx.byCode.get(r.school)?.name ?? ''), points: r.points, ranked: r.ranked }));
+    const list: RankRow[] = rows.map((r) => ({ nick: r.nick, schoolName: shortSchool(idx.byCode.get(r.school)?.name ?? ''), points: r.points, ranked: r.ranked, title: r.title || '' }));
+    return { ok: true, rows: list };
+  }
+
+  /** 선생님 학습 지표: 우리 학교 학생마다 기록(선생님 계정만, 누를 때만 읽음) */
+  async classStats(token: string) {
+    const who = await this.accountOf(token);
+    if (!who) return { ok: false, code: 'no_session', error: '먼저 들어가기를 해 주세요.' };
+    if (!isAdmin(who.school, who.nick)) return { ok: false, error: '선생님 계정만 볼 수 있어요.' };
+    const rows = this.sql.exec<Record<string, string | number>>('SELECT * FROM records WHERE school = ? ORDER BY updated DESC LIMIT 400', who.school).toArray();
+    const list = rows.map((r) => {
+      const rec = this.parseRecord(r);
+      return {
+        nick: String(r.nick), games: rec.games, firsts: rec.firsts, points: rec.points, ranked: rec.ranked, tutorial: rec.tutorial, quiz: rec.quiz,
+        tips: rec.tips.length, bestChorus: rec.bestChorus?.count ?? 0, chorusBeat: rec.bestChorus?.beat ?? 0,
+        met: rec.collection.met?.length ?? 0, three: rec.collection.three?.length ?? 0, morphs: rec.collection.morphs?.length ?? 0,
+        updated: Number(r.updated) || 0,
+      };
+    });
     return { ok: true, rows: list };
   }
 }
