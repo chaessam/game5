@@ -263,7 +263,7 @@ function unitToken(u: UnitInst, size: number, hs?: { shield: number }) {
     }
   }
   const items = u.items.length ? `<span class="uitems">${u.items.map((it) => `<i>${ITEM_LABEL[it]}</i>`).join('')}</span>` : '';
-  const hand = hs ? `<span class="hstag" title="손잡기 방패">🤝${hs.shield}</span>` : '';
+  const hand = hs ? `<span class="hstag" title="손잡기 방패"><i>🤝</i><b>${hs.shield}</b></span>` : '';
   return `<button class="unit ${sel ? 'sel' : ''}" data-action="unit" data-uid="${u.uid}" draggable="true">
     <span class="stars">${stars(u.star)}</span>${charArt(u.char, size, { star: u.star, num: numberOf(u) })}<span class="nm">${esc(UNITS[u.char].name)}</span>${items}${tag}${hand}
   </button>`;
