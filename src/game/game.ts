@@ -78,12 +78,15 @@ export function createGame(opts: NewGameOptions): GameState {
  * 온라인 대결 판: 자리 순서대로 플레이어(내 자리만 직접 둠, 나머지는 원격). 서버는 mySeat = -1(모두 원격).
  * 같은 시드·사람 수면 서버와 모든 기기의 첫 상태가 같고, 라운드 결과도 resolveRound(g, { boards, pairs })로 똑같이 나온다.
  */
-export function createOnlineGame(opts: { seed: number; short: boolean; names: string[]; mySeat: number }): GameState {
+export function createOnlineGame(opts: { seed: number; short: boolean; names: string[]; mySeat: number; bots?: number[] }): GameState {
   const g = createGame({ seed: opts.seed, short: opts.short, bots: opts.names.length - 1 });
   g.players.forEach((p, i) => {
     p.name = opts.names[i];
-    p.isBot = false;
-    p.remote = i !== opts.mySeat;
+    // bots: 빈자리 컴퓨터(보통) 중 이 기기(방장)가 대신 두는 자리
+    const drive = !!opts.bots?.includes(i) && i !== opts.mySeat;
+    p.isBot = drive;
+    p.difficulty = 'normal';
+    p.remote = i !== opts.mySeat && !drive;
     if (p.remote) delete g.freePick[p.id];
   });
   if (g.phase === 'freePick' && !Object.keys(g.freePick).length) g.phase = 'prep';

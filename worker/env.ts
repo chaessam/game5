@@ -13,4 +13,6 @@ export interface Who {
   nick: string;
   schoolName: string;
   points: number;
+  /** 선생님 계정(반 대기실을 열 수 있음) */
+  teacher: boolean;
 }

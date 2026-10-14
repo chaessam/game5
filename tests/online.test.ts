@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { advance, autoFill, chooseFreePick, chooseReward, createOnlineGame, currentPlan, pairings, resolveRound, toBattleBoard } from '../src/game/game';
-import { botPrep } from '../src/game/bot';
+import { botFreePick, botPrep, botRewards } from '../src/game/bot';
 import type { Difficulty } from '../src/game/types';
+import { splitGroups } from '../src/shared/online';
 
 /** 서버(모두 원격) 1개 + 기기 n개: 기기는 자기 자리만 두고, 서버가 모은 보드로 결과를 똑같이 계산하는지 */
 function simulate(n: number, short: boolean, seed: number) {
@@ -48,5 +49,63 @@ describe('온라인 대결: 서버와 기기가 같은 결과', () => {
     expect(simulate(3, false, 22)).toBe(12);
     expect(simulate(4, false, 33)).toBe(12);
     expect(simulate(4, true, 44)).toBe(8);
+  });
+});
+
+/** 사람 2명 + 컴퓨터 2명: 컴퓨터는 0번 자리(방장) 기기가 대신 두고 보드를 함께 보냄 */
+describe('온라인 대결: 빈자리 컴퓨터(방장 기기)', () => {
+  it('서버·방장·다른 친구 결과가 같음', () => {
+    const names = ['방장', '친구', '컴퓨터 척척이', '컴퓨터 반짝이'];
+    const seed = 77;
+    const server = createOnlineGame({ seed, short: false, names, mySeat: -1 });
+    const host = createOnlineGame({ seed, short: false, names, mySeat: 0, bots: [2, 3] });
+    const other = createOnlineGame({ seed, short: false, names, mySeat: 1 });
+    expect(host.players.map((p) => [p.isBot, !!p.remote])).toEqual([[false, false], [false, true], [true, false], [true, false]]);
+    for (const p of host.players) if (p.isBot) botFreePick(host, p);
+    chooseFreePick(host, host.players[0], 0);
+    chooseFreePick(other, other.players[1], 1);
+    expect(host.phase).toBe('prep');
+    while (server.phase !== 'over') {
+      const boards = [0, 1, 2, 3].map((i) => {
+        const c = i === 1 ? other : host;
+        const p = c.players[i];
+        if (!p.isBot) p.difficulty = i === 0 ? 'hard' : 'easy';
+        botPrep(c, p);
+        autoFill(p);
+        return toBattleBoard(p);
+      });
+      const pairs = currentPlan(server).kind === 'pvp' ? pairings(server) : undefined;
+      resolveRound(server, { boards, light: true });
+      server.pendingRewards = [];
+      advance(server);
+      for (const [c, mine] of [[host, 0], [other, 1]] as const) {
+        resolveRound(c, { boards, pairs });
+        c.pendingRewards = c.pendingRewards.filter((r) => !c.players[r.playerId].remote);
+        botRewards(c);
+        if (c.pendingRewards.length) chooseReward(c, mine, 0);
+        expect(c.pendingRewards.length).toBe(0);
+        advance(c);
+        c.monsterIndex = server.monsterIndex;
+        expect(c.players.map((p) => p.medals)).toEqual(server.players.map((p) => p.medals));
+        expect(c.phase).toBe(server.phase);
+      }
+    }
+  });
+});
+
+describe('선생님 반 시작: 모둠 나누기', () => {
+  it('2~4명으로 고르게(크기 차이 1 이하)', () => {
+    expect(splitGroups(1)).toEqual([1]);
+    expect(splitGroups(2)).toEqual([2]);
+    expect(splitGroups(5)).toEqual([3, 2]);
+    expect(splitGroups(9)).toEqual([3, 3, 3]);
+    expect(splitGroups(25)).toEqual([4, 4, 4, 4, 3, 3, 3]);
+    for (let n = 2; n <= 40; n++) {
+      const g = splitGroups(n);
+      expect(g.reduce((a, b) => a + b, 0)).toBe(n);
+      expect(Math.max(...g) - Math.min(...g)).toBeLessThanOrEqual(1);
+      expect(Math.min(...g)).toBeGreaterThanOrEqual(2);
+      expect(Math.max(...g)).toBeLessThanOrEqual(4);
+    }
   });
 });

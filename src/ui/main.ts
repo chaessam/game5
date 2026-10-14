@@ -12,6 +12,7 @@ import {
   type RoundOutcome,
 } from '../game/game';
 import { botFreePick, botPrep, botRewards } from '../game/bot';
+import { deserializeGame, serializeGame } from '../game/game';
 import { ECON, SHOP_ODDS } from '../game/economy';
 import {
   FAM_ORDER, ITEM_HELP, ITEM_LABEL, ITEM_NAME, ROLE_ORDER, checkItems, equip, isStoneItem, numberOf, previewEquip, secondSlotRound, slotCount,
@@ -30,7 +31,7 @@ import { TIPS, battleTips, clearPending, markSeen, mergeSeen, pendingTips, prepT
 import { createRoom, fetchGhosts, fetchRanking, getAuth, listRooms, saveProgress, saveRecord } from '../net/api';
 import { RoomConn, type ConnStatus } from '../net/room';
 import { cleanBoard } from '../shared/board';
-import type { ClientMsg, FinalPlace, LobbyRoom, RankRow, RoomInfo, RoundMsg, ServerMsg } from '../shared/online';
+import { EMOTES, type ClientMsg, type FinalPlace, type LobbyRoom, type RankRow, type RoomInfo, type RoundMsg, type ServerMsg } from '../shared/online';
 import { placePointsText, rankTier } from '../shared/rank';
 import { josa, josaOnly } from '../shared/josa';
 
@@ -422,7 +423,7 @@ function scoutsHtml(p: PlayerState) {
     const av = top ? charArt(top.char, 30, { star: top.star, noNumber: true, noGems: true }) : '<span style="width:30px;text-align:center">🙂</span>';
     const vs = q.id === vsId;
     const tag = vs ? `<em>${o?.kind === 'pvp' && o.mirror ? '거울 상대' : '이번 상대'}</em>` : '';
-    const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : q.remote && online ? tierBadge(online.points[q.id] ?? 0, true) : '';
+    const diff = q.ghost ? '<small class="dtag">유령</small>' : q.isBot ? `<small class="dtag">${DIFF_LABEL[q.difficulty]}</small>` : online?.bots.includes(q.id) ? '<small class="dtag">컴퓨터</small>' : q.remote && online ? tierBadge(online.points[q.id] ?? 0, true) : '';
     return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
@@ -605,9 +606,10 @@ function render() {
       <div class="lv"><b class="jua" style="font-size:18px">레벨 ${p.level}</b>
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
         <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (4골드)</button>` : '<small>최고 레벨</small>'}</div>
+      ${online?.playing ? '<button class="btn small ghost emob" data-action="emotes" title="감정 스티커">😀</button>' : ''}
       <button class="btn small ghost nb" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘<span class="nbt"> 수첩</span></button>
       ${online?.playing && g.phase !== 'over' ? `<span class="otimer nc-timer">${fmtLeft(online.deadline - Date.now())}</span>` : ''}
-      ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : onlineLocked() ? `<span class="ready tag waiting">⏳ 기다리는 중 ${online!.readyN}/${g.players.length}<small class="nc-timer mt">${fmtLeft(online!.deadline - Date.now())}</small></span>` : `<button class="btn gold ready" data-action="ready">준비 완료 ▶${online?.playing ? `<small class="nc-timer mt">${fmtLeft(online.deadline - Date.now())}</small>` : ''}</button>`}
+      ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : onlineLocked() ? `<span class="ready tag waiting">⏳ 기다리는 중 ${online!.readyN}/${online!.readyOf || g.players.length}<small class="nc-timer mt">${fmtLeft(online!.deadline - Date.now())}</small></span>` : `<button class="btn gold ready" data-action="ready">준비 완료 ▶${online?.playing ? `<small class="nc-timer mt">${fmtLeft(online.deadline - Date.now())}</small>` : ''}</button>`}
       <i class="brk"></i>
     </header>
     <nav class="synstrip">${syn.strip}</nav>
@@ -629,12 +631,14 @@ function render() {
     </footer>
   </div>
   ${detailHtml(p)}
+  ${online?.playing && emotePicker ? `<div class="emopanel">${emoteRow()}</div>` : ''}
   ${modalHtml()}
   ${toastMsg ? `<div class="toast">${esc(toastMsg)}</div>` : ''}`;
   app.classList.toggle('detail-open', detailOpen);
   // 휴대폰: 위에 붙은 막대 높이(하나쌤 말풍선을 그 바로 아래에 붙이려고)
   const top = app.querySelector<HTMLElement>('.top');
   if (top) document.documentElement.style.setProperty('--toph', `${top.offsetHeight}px`);
+  saveOnline();
   KEEP_SCROLL.forEach((sel, i) => {
     const el = app.querySelector(sel);
     const k = kept[i];
@@ -790,6 +794,30 @@ app.addEventListener('click', (ev) => {
   if (a === 'startroom') {
     online?.conn.send({ t: 'start' });
     return;
+  }
+  if (a === 'quickjoin') {
+    void quickJoin();
+    return;
+  }
+  if (a === 'mkclass') {
+    void makeRoom(false, 'class');
+    return;
+  }
+  if (a === 'fill') {
+    online?.conn.send({ t: 'fill', on: el.dataset.on === '1' });
+    return;
+  }
+  if (a === 'classstart') {
+    online?.conn.send({ t: 'classstart', short: el.dataset.short === '1' });
+    return;
+  }
+  if (a === 'emote') {
+    sendEmote(Number(el.dataset.i));
+    return render();
+  }
+  if (a === 'emotes') {
+    emotePicker = !emotePicker;
+    return render();
   }
   if (a === 'rank' || a === 'rankscope') {
     const scope = a === 'rankscope' ? (el.dataset.scope as 'school' | 'all') : getAuth() ? 'school' : 'all';
@@ -999,7 +1027,15 @@ let online: {
   lastReady: ClientMsg | null;
   status: ConnStatus;
   points: number[];
+  /** 컴퓨터 자리, 그 컴퓨터를 대신 두는 자리(방장), 점수가 걸린 판인지 */
+  bots: number[];
+  driver: number;
+  ranked: boolean;
+  readyOf: number;
+  /** 대기실 자동 시작 시각(이 기기 시각) */
+  autoAt: number | null;
 } | null = null;
+let lastEmoteSent = 0;
 let onlineTimer = 0;
 /** 준비 완료를 누른 뒤에는 판을 못 바꿈(서버가 이미 받은 보드로 싸우니까) */
 const LOCKED_WHEN_READY = new Set(['buy', 'sell', 'sellzone', 'reroll', 'xp', 'lock', 'cell', 'benchslot', 'unit', 'bagitem', 'equipok', 'unequip', 'pick']);
@@ -1034,8 +1070,8 @@ async function refreshRooms(manual: boolean) {
   if (!r.ok && manual) toast(r.error ?? '방 목록을 불러오지 못했어요');
   if (modal?.type === 'lobby') render();
 }
-async function makeRoom(short: boolean) {
-  const r = await createRoom(short);
+async function makeRoom(short: boolean, kind: 'room' | 'class' = 'room') {
+  const r = await createRoom(short, kind);
   if (!r.ok) {
     toast(r.error ?? '방을 만들지 못했어요');
     return render();
@@ -1049,6 +1085,7 @@ function joinRoom(id: string) {
   const o: NonNullable<typeof online> = {
     conn: null as unknown as RoomConn, room: null, you: -1, playing: false, deadline: 0, submitted: false, readyN: 0,
     queue: [], applied: new Set(), nextMonster: null, final: null, lastReady: null, status: 'retry', points: [],
+    bots: [], driver: -1, ranked: true, readyOf: 0, autoAt: null,
   };
   online = o;
   o.conn = new RoomConn(id, (m) => onServer(o, m), (st, why) => onConn(o, st, why), () => (o.playing && g ? g.round : 0));
@@ -1058,6 +1095,125 @@ function leaveOnline() {
   online?.conn.leave();
   online = null;
   clearInterval(onlineTimer);
+  clearSavedOnline();
+}
+
+/** 빠른 입장: 우리 학교 방 → 사람이 많은 방 먼저, 없으면 새 방 */
+async function quickJoin() {
+  const r = await listRooms();
+  const rooms = (r.ok ? r.rooms : []).filter((x) => x.kind === 'room' && x.n < x.size);
+  const pick = rooms.sort((a, b) => Number(b.mine) - Number(a.mine) || b.n - a.n)[0];
+  if (pick) joinRoom(pick.id);
+  else {
+    toast('열린 방이 없어서 새 방을 만들었어요. 친구가 오면 자동으로 시작해요!');
+    return makeRoom(false);
+  }
+  render();
+}
+
+
+/** 대기실 자동 시작 남은 시간(방 화면이 열려 있을 때만 1초마다 글자만 바꿈) */
+let roomTicker = 0;
+function startRoomTicker() {
+  clearInterval(roomTicker);
+  roomTicker = window.setInterval(() => {
+    if (modal?.type !== 'room' || !online || online.playing) return clearInterval(roomTicker);
+    const left = online.autoAt === null ? null : online.autoAt - Date.now();
+    document.querySelectorAll('.nc-auto').forEach((el) => (el.textContent = left === null ? '' : fmtLeft(left)));
+  }, 1000);
+}
+
+// ---- 감정 스티커: 자유 글 없이 캐릭터 + 한마디. 서버는 저장하지 않고 방에 한 번 방송 ----
+let emotePicker = false;
+function showEmote(nick: string, id: number, mine: boolean) {
+  const e = EMOTES[id];
+  if (!e) return;
+  let layer = document.getElementById('nc-emotes');
+  if (!layer) {
+    layer = document.createElement('div');
+    layer.id = 'nc-emotes';
+    document.body.appendChild(layer); // 화면을 다시 그려도 지워지지 않게 따로
+  }
+  const el = document.createElement('div');
+  el.className = `emote ${mine ? 'mine' : ''}`;
+  el.innerHTML = `${charArt(e.char, 34, { noNumber: true, noGems: true })}<span><b>${esc(mine ? '나' : nick)}</b> ${esc(e.text)}</span>`;
+  layer.appendChild(el);
+  while (layer.children.length > 4) layer.firstElementChild?.remove();
+  setTimeout(() => el.remove(), 3200);
+}
+function sendEmote(id: number) {
+  if (!online) return;
+  if (Date.now() - lastEmoteSent < 2000) return toast('스티커는 2초에 하나씩!');
+  lastEmoteSent = Date.now();
+  online.conn.send({ t: 'emote', id });
+  emotePicker = false;
+}
+const emoteRow = () => `<div class="emorow">${EMOTES.map((e, i) => `<button class="emo" data-action="emote" data-i="${i}" title="${esc(e.text)}">${charArt(e.char, 30, { noNumber: true, noGems: true })}<small>${esc(e.text)}</small></button>`).join('')}</div>`;
+
+// ---- 새로고침해도 하던 온라인 판 이어 하기(이 탭에만 저장) ----
+const SAVE_KEY = 'nc-online';
+function saveOnline() {
+  const o = online;
+  if (!o?.playing || !g) return;
+  if (g.phase === 'over') return clearSavedOnline();
+  try {
+    sessionStorage.setItem(SAVE_KEY, JSON.stringify({
+      at: Date.now(), id: o.conn.id, you: o.you, points: o.points, bots: o.bots, driver: o.driver, ranked: o.ranked, readyOf: o.readyOf,
+      g: serializeGame(g), applied: [...o.applied], nextMonster: o.nextMonster, deadlineLeft: o.deadline - Date.now(),
+      submitted: o.submitted, lastReady: o.lastReady, final: o.final,
+      run: { myBoards, met: [...met], three: [...three], morphs: [...morphs], bestChorus },
+    }));
+  } catch {
+    /* 저장 못 해도 게임은 계속 */
+  }
+}
+function clearSavedOnline() {
+  try {
+    sessionStorage.removeItem(SAVE_KEY);
+  } catch {
+    /* 무시 */
+  }
+}
+function resumeOnline(): boolean {
+  let s: {
+    at: number; id: string; you: number; points: number[]; bots: number[]; driver: number; ranked: boolean; readyOf: number;
+    g: string; applied: number[]; nextMonster: number | null; deadlineLeft: number; submitted: boolean; lastReady: ClientMsg | null; final: FinalPlace[] | null;
+    run: { myBoards: BoardUnit[][]; met: number[]; three: number[]; morphs: string[]; bestChorus: typeof bestChorus };
+  } | null = null;
+  try {
+    s = JSON.parse(sessionStorage.getItem(SAVE_KEY) || 'null');
+  } catch {
+    s = null;
+  }
+  if (!s || Date.now() - s.at > 40 * 60_000 || !getAuth()) {
+    clearSavedOnline();
+    return false;
+  }
+  resetRun();
+  g = deserializeGame(s.g);
+  meIdx = s.you;
+  myBoards = s.run.myBoards;
+  s.run.met.forEach((x) => met.add(x));
+  s.run.three.forEach((x) => three.add(x));
+  s.run.morphs.forEach((x) => morphs.add(x));
+  bestChorus = s.run.bestChorus;
+  const o: NonNullable<typeof online> = {
+    conn: null as unknown as RoomConn, room: null, you: s.you, playing: true, deadline: Date.now() + s.deadlineLeft, submitted: s.submitted, readyN: 0,
+    queue: [], applied: new Set(s.applied), nextMonster: s.nextMonster, final: s.final, lastReady: s.lastReady, status: 'retry', points: s.points,
+    bots: s.bots, driver: s.driver, ranked: s.ranked, readyOf: s.readyOf, autoAt: null,
+  };
+  online = o;
+  // 결과를 보던 중이었으면(이미 받은 라운드) 다음 라운드로
+  if (o.applied.has(g.round) && g.phase === 'prep') {
+    advance(g);
+    onlineAdvanced();
+  }
+  o.conn = new RoomConn(s.id, (m) => onServer(o, m), (st, why) => onConn(o, st, why), () => (g ? g.round : 0));
+  modal = null;
+  clearInterval(onlineTimer);
+  onlineTimer = window.setInterval(tickOnline, 1000);
+  toast('하던 온라인 대결로 돌아왔어요!');
+  return true;
 }
 
 function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
@@ -1066,13 +1222,31 @@ function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
     case 'room':
       o.room = m.room;
       o.you = m.you;
-      if (!o.playing) modal = { type: 'room' };
+      o.autoAt = m.room.autoInMs === null ? null : Date.now() + m.room.autoInMs;
+      if (!o.playing) {
+        modal = { type: 'room' };
+        startRoomTicker();
+      }
+      break;
+    case 'emote':
+      showEmote(m.nick, m.id, m.seat === o.you);
+      return;
+    case 'goto':
+      // 선생님이 모둠을 나눔 → 모둠 방으로
+      toast('선생님이 모둠을 정했어요! 모둠 방으로 가요');
+      joinRoom(m.id);
+      break;
+    case 'notice':
+      toast(m.text);
       break;
     case 'start':
       startOnline(o, m);
       break;
     case 'ready':
-      if (g && m.round === g.round) o.readyN = m.n;
+      if (g && m.round === g.round) {
+        o.readyN = m.n;
+        o.readyOf = m.of;
+      }
       break;
     case 'round':
       if (!o.applied.has(m.round) && !o.queue.some((x) => x.round === m.round)) o.queue.push(m);
@@ -1087,6 +1261,14 @@ function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
       if (!o.playing) {
         online = null;
         openLobby();
+      } else {
+        // 이어 하려던 판이 이미 끝났거나 없어짐
+        online = null;
+        clearSavedOnline();
+        clearInterval(onlineTimer);
+        g = null;
+        meIdx = 0;
+        modal = { type: 'start' };
       }
       break;
   }
@@ -1128,9 +1310,15 @@ function startOnline(o: NonNullable<typeof online>, m: Extract<ServerMsg, { t: '
   o.playing = true;
   o.points = m.points;
   o.you = m.you;
-  g = createOnlineGame({ seed: m.seed, short: m.short, names: m.names.map((n, i) => (i === m.you ? '나' : n)), mySeat: m.you });
+  o.bots = m.bots;
+  o.driver = m.driver;
+  o.ranked = m.ranked;
+  o.readyOf = m.names.length - m.bots.length;
+  // 빈자리 컴퓨터는 방장 기기가 대신 둠(보통)
+  g = createOnlineGame({ seed: m.seed, short: m.short, names: m.names.map((n, i) => (i === m.you ? '나' : n)), mySeat: m.you, bots: m.you === m.driver ? m.bots : [] });
   meIdx = m.you;
   g.monsterIndex = m.monsterIndex;
+  for (const p of g.players) if (p.isBot) botFreePick(g, p);
   o.deadline = Date.now() + m.remainMs;
   o.submitted = false;
   o.queue = [];
@@ -1147,7 +1335,10 @@ function onlineReady() {
   if (g.phase !== 'prep') return;
   unlockAudio();
   autoFill(me());
-  const msg: ClientMsg = { t: 'ready', round: g.round, board: cleanBoard(toBattleBoard(me())) };
+  prepBots();
+  const bots: Record<number, BoardUnit[]> = {};
+  for (const q of g.players) if (q.isBot) bots[q.id] = cleanBoard(toBattleBoard(q));
+  const msg: ClientMsg = { t: 'ready', round: g.round, board: cleanBoard(toBattleBoard(me())), ...(Object.keys(bots).length ? { bots } : {}) };
   o.lastReady = msg;
   o.submitted = true;
   selected = null;
@@ -1171,6 +1362,7 @@ function pumpOnline() {
     if (g!.players[i]) g!.players[i].medals = v;
   });
   g.pendingRewards = g.pendingRewards.filter((r) => !g!.players[r.playerId].remote);
+  botRewards(g); // 방장 기기의 컴퓨터
   if (!g.pendingRewards.length) g.phase = 'prep';
   g.players.forEach((q, i) => {
     if (q.remote) setBoardFrom(g!, q, m.boards[i] ?? []);
@@ -1222,7 +1414,7 @@ function lobbyHtml(): string {
   const rooms = lobbyRooms === null
     ? '<div class="sub">불러오는 중…</div>'
     : lobbyRooms.length
-      ? lobbyRooms.map((r) => `<button class="roomrow" data-action="joinroom" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.short ? '짧은 판 · 8라운드' : '12라운드'}</small></span><span class="cnt">${r.n}/${r.size}명</span><em>들어가기 ▶</em></button>`).join('')
+      ? lobbyRooms.map((r) => `<button class="roomrow ${r.kind === 'class' ? 'cls' : ''}" data-action="joinroom" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.kind === 'class' ? '선생님이 모둠을 나눠 시작해요' : r.short ? '짧은 판 · 8라운드' : '12라운드'}${r.mine && r.kind !== 'class' ? ' · <span class="tag">우리 학교</span>' : ''}</small></span><span class="cnt">${r.kind === 'class' ? `${r.n}명` : `${r.n}/${r.size}명`}</span><em>들어가기 ▶</em></button>`).join('')
       : '<div class="sub">아직 열린 방이 없어요. 방을 만들고 친구를 불러요!</div>';
   return `<div class="modal"><div class="box lobby">
     <button class="btn small ghost close" data-action="lobbyback" style="float:right">← 처음 화면</button>
@@ -1232,8 +1424,10 @@ function lobbyHtml(): string {
     <h3 class="jua">들어갈 수 있는 방</h3>
     <div class="rooms">${rooms}</div>
     <div class="lobbybtns">
-      <button class="btn gold" data-action="mkroom" data-short="0">＋ 방 만들기 (12라운드)</button>
-      <button class="btn" data-action="mkroom" data-short="1">＋ 짧은 판 방 (8라운드)</button>
+      <button class="btn gold" data-action="quickjoin">⚡ 빠른 입장</button>
+      ${getAuth()?.teacher ? '<button class="btn on" data-action="mkclass">🍎 우리 반 대기실 열기</button>' : ''}
+      <button class="btn" data-action="mkroom" data-short="0">＋ 방 만들기 (12라운드)</button>
+      <button class="btn ghost" data-action="mkroom" data-short="1">＋ 짧은 판 방 (8라운드)</button>
       <button class="btn ghost" data-action="refreshrooms">↻ 새로고침</button>
       <button class="btn ghost" data-action="rank">🏆 랭킹</button>
     </div>
@@ -1246,18 +1440,40 @@ function roomHtml(): string {
   if (!o || !r) {
     return `<div class="modal"><div class="box"><h2>방에 들어가는 중…</h2><p><button class="btn ghost" data-action="leaveroom">나가기</button></p></div></div>`;
   }
+  const left = o.autoAt === null ? null : o.autoAt - Date.now();
+  const auto = left === null ? '' : `<div class="hl autostart">⏳ 자동 시작까지 <b class="jua nc-auto">${fmtLeft(left)}</b></div>`;
+  const seatHtml = (s: RoomInfo['seats'][number], i: number) => `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${s.teacher ? '<em>선생님</em>' : tierBadge(s.points, true)}${i === r.host && r.kind !== 'class' ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`;
+  const humans = r.seats.filter((s) => !s.bot).length;
+  if (r.kind === 'class') {
+    const teacher = !!r.seats[o.you]?.teacher;
+    const students = r.seats.filter((s) => !s.teacher);
+    return `<div class="modal"><div class="box roombox">
+      <h2>🍎 우리 반 대기실</h2>
+      ${teacher
+        ? `<div class="sub">학생들이 ⚔️ 온라인 대결 → 목록 맨 위 '선생님 반 대기실'로 들어와요. 다 모이면 시작을 눌러 주세요. 2~4명씩 고르게 모둠을 나누고, 빈자리는 컴퓨터가 채워요.</div>
+          <div class="hl">들어온 학생 <b class="jua">${students.length}명</b>${r.groups ? ` · 지금까지 시작한 모둠 ${r.groups}개` : ''}</div>
+          <div class="chips">${students.map((s) => `<span class="schip">${esc(s.nick)}${s.online ? '' : ' (끊김)'}</span>`).join('') || '<span class="sub">아직 없어요</span>'}</div>
+          <div class="lobbybtns"><button class="btn gold bigbtn" data-action="classstart" data-short="0" ${students.length ? '' : 'disabled'}>▶ 모둠 나눠 시작 (12라운드)</button><button class="btn" data-action="classstart" data-short="1" ${students.length ? '' : 'disabled'}>▶ 짧은 판으로 (8라운드)</button></div>
+          <p class="sub">늦게 온 학생은 대기실에 모였다가 다시 시작을 누르면 새 모둠으로 시작해요. 모둠이 1명이면 컴퓨터와 연습 판(점수 없음).</p>`
+        : `<div class="hl">선생님이 시작하면 2~4명씩 모둠이 정해지고 바로 게임이 시작돼요. (지금 ${students.length}명)</div>`}
+      ${emoteRow()}
+      <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>
+    </div></div>`;
+  }
   const host = o.you === r.host;
   const seats = Array.from({ length: r.size }, (_, i) => r.seats[i]);
+  const group = r.kind === 'group';
   return `<div class="modal"><div class="box roombox">
-    <h2>⚔️ ${r.short ? '짧은 판' : '12라운드'} 방 <span class="sub code">${r.id}</span></h2>
-    <div class="sub">2~4명 · 방장이 시작해요 · 라운드마다 준비 시간이 있어요(시간이 다 되면 그때 판으로 싸워요)</div>
-    <div class="seats">${seats.map((s, i) => (s
-      ? `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${tierBadge(s.points, true)}${i === r.host ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`
-      : '<div class="seat empty">빈 자리</div>')).join('')}</div>
-    ${host
-      ? `<button class="btn gold bigbtn" data-action="startroom" ${r.seats.length < 2 ? 'disabled' : ''}>▶ 시작하기 (${r.seats.length}명)</button>${r.seats.length < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
-      : '<div class="hl">방장이 시작하기를 기다려요…</div>'}
-    <p class="sub">이 방 점수: ${placePointsText(Math.max(2, r.seats.length))}</p>
+    <h2>⚔️ ${group ? '우리 모둠' : r.short ? '짧은 판 방' : '12라운드 방'} <span class="sub code">${r.short ? '8라운드' : '12라운드'}</span></h2>
+    <div class="sub">${group ? '선생님이 정한 모둠이에요. 모두 모이면 바로 시작해요.' : '2~4명 · 사람이 2명 모이면 1분 뒤, 꽉 차면 바로 시작해요(방장은 먼저 시작 가능).'} 라운드마다 준비 시간이 있어요.</div>
+    <div class="seats">${seats.map((s, i) => (s ? seatHtml(s, i) : `<div class="seat empty">${r.fill ? '🤖 컴퓨터가 채워요' : '빈 자리'}</div>`)).join('')}</div>
+    ${auto}
+    ${host && !group
+      ? `<div class="lobbybtns"><button class="btn gold bigbtn" data-action="startroom" ${humans < 2 ? 'disabled' : ''}>▶ 지금 시작 (${humans}명${r.fill && humans < r.size ? ` + 컴퓨터 ${r.size - humans}` : ''})</button>
+         <button class="btn ${r.fill ? 'on' : 'ghost'}" data-action="fill" data-on="${r.fill ? 0 : 1}">🤖 빈자리 컴퓨터 ${r.fill ? '켜짐' : '꺼짐'}</button></div>${humans < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
+      : group ? '' : '<div class="hl">방장이 시작하거나 자동 시작을 기다려요…</div>'}
+    <p class="sub">점수는 사람끼리 등수로: ${placePointsText(Math.max(2, humans))}${r.fill ? ' · 컴퓨터는 점수 없음' : ''}</p>
+    ${emoteRow()}
     <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>
   </div></div>`;
 }
@@ -1286,9 +1502,13 @@ async function loadRanking(scope: 'school' | 'all') {
 }
 
 function onlineFinalHtml(f: FinalPlace[]): string {
-  const rows = [...f].sort((a, b) => a.place - b.place).map((x) => `<div class="frow ${x.seat === meIdx ? 'me' : ''}"><b class="jua">${x.place}등</b><span>${esc(g!.players[x.seat]?.name ?? '')}</span><small>메달 ${x.medals}</small>${tierBadge(x.after, true)}<span class="${x.delta >= 0 ? 'up' : 'down'}">${x.delta > 0 ? '+' : ''}${x.delta}점</span></div>`).join('');
+  const ranked = online?.ranked !== false;
+  const people = [...f].filter((x) => !x.bot).sort((a, b) => a.place - b.place);
+  const hasBots = people.length < f.length;
+  const rows = [...f].sort((a, b) => a.place - b.place).map((x) => `<div class="frow ${x.seat === meIdx ? 'me' : ''}"><b class="jua">${x.place}등</b><span>${esc(g!.players[x.seat]?.name ?? '')}</span><small>메달 ${x.medals}${hasBots && !x.bot ? ` · 사람 중 ${people.indexOf(x) + 1}등` : ''}</small>${x.bot ? '<small class="dtag">컴퓨터</small>' : `${tierBadge(x.after, true)}${ranked ? `<span class="${x.delta >= 0 ? 'up' : 'down'}">${x.delta > 0 ? '+' : ''}${x.delta}점</span>` : ''}`}</div>`).join('');
   const mine = f.find((x) => x.seat === meIdx);
   if (!mine) return `<div class="hl finals">${rows}</div>`;
+  if (!ranked) return `<div class="hl finals">${rows}</div><div class="hl tip">모둠에 혼자라 컴퓨터와 한 연습 판이었어요(점수 없음).</div>`;
   const tb = rankTier(mine.before);
   const ta = rankTier(mine.after);
   const change = ta.index > tb.index ? `🎉 승급! ${tb.label} → <b>${ta.label}</b>` : ta.index < tb.index ? `${tb.label} → ${ta.label}. 다음 판에 다시 올라가요!` : ta.div !== tb.div ? `${tb.label} → <b>${ta.label}</b>` : `${ta.label} 그대로`;
@@ -1584,6 +1804,7 @@ app.addEventListener('drop', (ev) => {
 });
 
 bindLoginInputs(app);
+resumeOnline(); // 새로고침 전에 하던 온라인 대결이 있으면 이어서
 void refreshMe().then(() => {
   mergeSeen(myRecord()?.tips ?? []);
   render();

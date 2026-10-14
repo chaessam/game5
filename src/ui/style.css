@@ -363,6 +363,22 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
 .ranklist small { color: var(--muted); flex: 1; }
 .ranklist .pts { font-family: 'Jua', sans-serif; }
 
+/* 감정 스티커 · 반 대기실 · 자동 시작 */
+.emorow { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 4px; }
+.emo { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.06); padding: 1px 9px 1px 2px; font-size: 12px; font-weight: 800; }
+.emo:hover { border-color: var(--gold); }
+.emo svg { flex: none; }
+.emopanel { position: fixed; top: 74px; left: 50%; transform: translateX(-50%); z-index: 25; width: min(560px, calc(100vw - 16px)); background: #1d1650; border: 2px solid var(--gold); border-radius: 16px; padding: 4px 10px 8px; box-shadow: 0 12px 30px rgba(0,0,0,.5); }
+#nc-emotes { position: fixed; top: 80px; right: 12px; z-index: 45; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; pointer-events: none; }
+.emote { display: flex; align-items: center; gap: 6px; background: #fff; color: #1d1440; border-radius: 999px; padding: 2px 14px 2px 4px; font-weight: 800; font-size: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.45); border: 3px solid var(--gold); animation: popin .3s ease-out; }
+.emote.mine { border-color: var(--good); }
+.emote b { color: #6b55ff; }
+.roomrow.cls { border-color: rgba(255,107,129,.7); background: rgba(255,107,129,.12); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 10px; }
+.schip { font-size: 13px; font-weight: 800; border-radius: 999px; padding: 2px 10px; background: rgba(255,255,255,.1); }
+.autostart { text-align: center; }
+.autostart .jua { font-size: 22px; color: var(--gold); }
+
 /* 휴대폰에서만 보이는 것 */
 .synstrip, .inc-m, .brk, .minibar { display: none; }
 .minibar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; align-items: center; gap: 8px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: #1d1650; border-top: 2px solid var(--gold); box-shadow: 0 -8px 26px rgba(0,0,0,.5); font-size: 13px; line-height: 1.35; }
@@ -389,7 +405,9 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .logo, .round .of, .inc { display: none; }
   .inc-m { display: inline; }
   .brk { display: block; flex-basis: 100%; height: 0; order: 5; }
-  .top { gap: 4px 10px; }
+  .top { gap: 4px 8px; }
+  .top .stat small:not(.inc-m) { display: none; } /* '메달' 글자 대신 🏅만 */
+  .top .round .tag { font-size: 11px; padding: 1px 6px; }
   .round { order: 1; } .top .stat { order: 2; } .nb { order: 4; margin-left: auto; padding: 4px 8px; } .nbt, .xp4, .lv small { display: none; }
   .lv { order: 6; flex: 1; gap: 6px; } .lv .xpbar { width: auto; flex: 1; max-width: 120px; }
   .ready { order: 7; margin-left: 0; font-size: 16px; padding: 7px 14px; }
@@ -455,7 +473,7 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .modal h2 { font-size: 22px; }
   .modal .choices { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; margin: 10px 0; }
   .choice { padding: 9px 6px; font-size: 14px; }
-  .choice svg { width: 70px; height: 70px; }
+  .choice > svg { width: 70px; height: 70px; }
   .choice .jua { font-size: 17px !important; }
   .tutbtn .jua { font-size: 18px !important; }
   .loginbox .lrow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -478,6 +496,10 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .seats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lobbybtns .btn { flex: 1 1 45%; }
   .otimer { display: none; }
+  .emob { order: 4; padding: 4px 8px; }
+  .emopanel { top: 64px; }
+  #nc-emotes { top: 70px; right: 6px; }
+  .emote { font-size: 12px; }
   .nc-timer.mt { display: inline; margin-left: 6px; font-size: 13px; padding: 0 5px; border-radius: 8px; background: rgba(0,0,0,.15); }
   .nc-timer.mt.hurry { background: var(--bad); color: #fff; }
   .ready.waiting { font-size: 13px; padding: 4px 8px; order: 7; }

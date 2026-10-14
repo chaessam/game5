@@ -93,6 +93,6 @@ export const fetchGhosts = (n: number) => call<{ ghosts: { nick: string; rounds:
 // ---- 온라인 대결(랭크) ----
 // 방 목록은 방 고르는 화면이 열려 있을 때만 몇 초마다 1번, 게임 중에는 WebSocket 하나(라운드마다 보드 1번)
 export const listRooms = () => call<{ rooms: LobbyRoom[] }>('GET', 'rooms');
-export const createRoom = (short: boolean) => call<{ id: string }>('POST', 'rooms', { short, size: 4 });
+export const createRoom = (short: boolean, kind: 'room' | 'class' = 'room') => call<{ id: string }>('POST', 'rooms', { short, size: 4, kind });
 export const fetchRanking = (scope: 'school' | 'all') => call<{ rows: RankRow[] }>('GET', `ranking?scope=${scope}`);
 export const roomSocketUrl = (id: string) => `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/room/${id}/ws?t=${encodeURIComponent(auth?.token ?? '')}`;
