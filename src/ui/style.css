@@ -431,7 +431,7 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .tut .txt { font-size: 14px; }
   .tut .btns { grid-column: 1 / -1; justify-content: flex-end; }
   .tut.float { bottom: 8px; width: calc(100vw - 16px); }
-  .toast { bottom: 12px; max-width: calc(100vw - 24px); text-align: center; border-radius: 16px; }
+  .toast { bottom: 84px; max-width: calc(100vw - 24px); text-align: center; border-radius: 16px; } /* 아래 작은 줄 위로 */
 
   /* 전투: 화면 하나에 꽉 차게 */
   .app.battling { height: 100dvh; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top" "strip" "center"; }
