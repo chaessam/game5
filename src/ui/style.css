@@ -12,8 +12,10 @@ body {
   /* 한글은 낱말 중간에서 끊지 않기(너무 긴 것만 어디서든 끊음), 짧은 끝줄 피하기 */
   word-break: keep-all; overflow-wrap: anywhere; text-wrap: pretty;
 }
-h1, h2, h3, .ptitle, .bv-say .txt, .tut .txt, .bubble, .q { text-wrap: balance; }
+h1, h2, h3, .ptitle, .bv-say .txt, .tut .txt, .bubble, .q, .choice { text-wrap: balance; }
 button { font: inherit; color: inherit; cursor: pointer; }
+/* 휴대폰: 두 번 눌러 확대 막기(누름이 바로 먹히게) */
+button, .cell, .card, .sb, a { touch-action: manipulation; }
 .nw { white-space: nowrap; }
 .jua { font-family: 'Jua', 'Gothic A1', sans-serif; }
 
@@ -313,11 +315,158 @@ details pre { white-space: pre-wrap; font-size: 12px; max-height: 300px; overflo
   .drawer { max-height: calc(100vh - 100px); }
   .app { height: auto; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "top top" "center center" "shop shop" "left right"; }
   .drawer { width: min(330px, calc(100vw - 28px)); }
+  /* 태블릿·가로 휴대폰 전투: 가운데를 넓게, 높이는 정해 둠 */
+  .app.battling { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "top top" "center center" "left right"; }
+  .app.battling .bv-host { height: max(540px, calc(100dvh - 130px)); }
 }
+/* 휴대폰에서만 보이는 것 */
+.synstrip, .inc-m, .brk, .minibar { display: none; }
+.minibar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; align-items: center; gap: 8px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); background: #1d1650; border-top: 2px solid var(--gold); box-shadow: 0 -8px 26px rgba(0,0,0,.5); font-size: 13px; line-height: 1.35; }
+.minibar > span:not(.mb-btns) { flex: 1; min-width: 0; }
+.minibar small { color: var(--muted); }
+.minibar .mb-btns { display: flex; gap: 4px; flex: none; }
+.minibar .item { flex: none; }
+.minibar svg { flex: none; }
+.sc-chip { flex: none; display: inline-flex; align-items: center; gap: 3px; border: 1.5px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(255,255,255,.05); padding: 3px 9px 3px 6px; font-size: 12.5px; font-weight: 800; color: rgba(255,255,255,.55); }
+.sc-chip b { color: inherit; }
+.sc-chip.has { color: #fff; border-color: color-mix(in srgb, var(--c) 60%, transparent); }
+.sc-chip.on { color: #1d1440; background: var(--c); border-color: var(--c); }
+.synsheet .syn { margin-top: 8px; }
+.synsheet .rule { font-size: 14px; }
+.synsheet .steps span, .synsheet .members span { font-size: 13px; }
+
+/* ---------- 휴대폰 세로(넓이 700 이하) ---------- */
 @media (max-width: 700px) {
-  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "center" "shop" "left" "right"; padding: 8px; }
-  .shopbar { grid-template-columns: minmax(0, 1fr); }
-  .cards { grid-template-columns: repeat(5, minmax(120px, 1fr)); overflow-x: auto; }
-  .bench { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .ready { margin-left: 0; }
+  body { font-size: 15px; }
+  .app, .app.battling { height: auto; min-height: 100dvh; grid-template-columns: minmax(0, 1fr); grid-template-rows: none;
+    grid-template-areas: "top" "strip" "center" "shop" "left" "right"; padding: 6px; gap: 6px; }
+  /* 위 막대: 두 줄로 줄이고 위에 붙여 둠 */
+  .top { position: sticky; top: 0; z-index: 15; gap: 4px 12px; padding: 6px 10px; border-radius: 0 0 14px 14px; margin: -6px -6px 0; }
+  .logo, .round .of, .inc { display: none; }
+  .inc-m { display: inline; }
+  .brk { display: block; flex-basis: 100%; height: 0; order: 5; }
+  .top { gap: 4px 10px; }
+  .round { order: 1; } .top .stat { order: 2; } .nb { order: 4; margin-left: auto; padding: 4px 8px; } .nbt, .xp4, .lv small { display: none; }
+  .lv { order: 6; flex: 1; gap: 6px; } .lv .xpbar { width: auto; flex: 1; max-width: 120px; }
+  .ready { order: 7; margin-left: 0; font-size: 16px; padding: 7px 14px; }
+  .app.battling .ready { display: none; }
+  .stat .big { font-size: 20px; }
+  .round b.jua { font-size: 18px !important; }
+  /* 가문·직업: 한 줄 요약, 누르면 설명 카드 */
+  .synstrip { grid-area: strip; display: flex; gap: 5px; overflow-x: auto; scrollbar-width: none; padding: 1px 0; }
+  .synstrip::-webkit-scrollbar { display: none; }
+  .left, .right { overflow: visible; }
+  /* 판 */
+  .center { overflow: visible; gap: 6px; }
+  .panel { padding: 7px; border-radius: 12px; }
+  .opp { padding: 5px 7px; }
+  .opp .hintlabel { display: none; }
+  .scout { font-size: 12px; padding: 1px 8px 1px 3px; }
+  .board { gap: 4px; padding: 6px; }
+  .rowlabel { font-size: 11px; margin: 0; }
+  .cell { aspect-ratio: auto; min-height: 0; height: 74px; border-radius: 10px; }
+  .unit { padding: 0; }
+  .unit svg { width: 44px; height: 44px; }
+  .unit .stars { font-size: 10px; height: 11px; }
+  .unit .nm { font-size: 9.5px; }
+  .uitems i { font-size: 10px; }
+  .hstag { font-size: 9.5px; bottom: 12px; right: 0; }
+  .pvtag { font-size: 12px; }
+  .cap { font-size: 12px; }
+  .cap .hint { display: none; }
+  .bench { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 6px; }
+  .bench .cell { aspect-ratio: auto; height: 62px; min-height: 0; }
+  .bench .unit svg { width: 36px; height: 36px; }
+  /* 상점: 옆으로 넘기는 작은 카드 */
+  .shopbar { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .cards { display: flex; overflow-x: auto; scroll-snap-type: x proximity; gap: 6px; padding-bottom: 2px; }
+  .card { flex: 0 0 31%; min-width: 108px; min-height: 0; scroll-snap-align: start; padding: 4px 5px 6px; border-width: 2px; border-radius: 12px; }
+  .card .pic svg { width: 50px; height: 50px; }
+  .card .title { font-size: 13px; line-height: 1.2; }
+  .card .cost { font-size: 14px; right: 6px; top: 4px; }
+  .card .info { width: 22px; height: 22px; left: 4px; top: 4px; font-size: 12px; }
+  .card .beats { font-size: 11px; }
+  .card .band { font-size: 10px; padding: 1px 4px; }
+  .chip { font-size: 10px; }
+  .side { gap: 6px; }
+  .side .btn { padding: 6px 12px; font-size: 15px; }
+  .side .odds { font-size: 11px; }
+  .sellzone { padding: 6px; font-size: 12px; }
+  .sellzone small { display: none; }
+  /* 하나쌤 말풍선은 위 막대 바로 아래에 붙어서 내려도 보이게 */
+  .tut.dock { position: sticky; top: calc(var(--toph, 80px) - 2px); z-index: 14; box-shadow: 0 8px 20px rgba(0,0,0,.45); }
+  html { scroll-padding-top: calc(var(--toph, 80px) + 100px); scroll-padding-bottom: 80px; }
+  /* 친구·돌을 고르면 아래 작은 줄만(판을 가리지 않게), [자세히]로 큰 판 */
+  .minibar { display: flex; }
+  #app:not(.detail-open) .m-hide, #app.detail-open .minibar { display: none; }
+  .app { padding-bottom: 70px; }
+  /* 설명·돌 끼우기·구경: 아래에서 올라오는 판 */
+  .drawer, .drawer.small { left: 0; right: 0; top: auto; bottom: 0; width: auto; max-height: 74vh; max-height: 74dvh; border-radius: 18px 18px 0 0; border-width: 2px 0 0; padding: 12px 14px 16px; box-shadow: 0 -10px 40px rgba(0,0,0,.6); }
+  .drawer h3 { font-size: 19px; padding-right: 54px; }
+  .drawer dl { grid-template-columns: 64px 1fr; font-size: 13.5px; }
+  .pv-big { font-size: 28px; }
+  /* 창 */
+  .modal { padding: 8px; }
+  .modal .box { padding: 14px 12px; border-radius: 16px; max-height: calc(100dvh - 16px); }
+  .modal h2 { font-size: 22px; }
+  .modal .choices { grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; margin: 10px 0; }
+  .choice { padding: 9px 6px; font-size: 14px; }
+  .choice svg { width: 70px; height: 70px; }
+  .choice .jua { font-size: 17px !important; }
+  .tutbtn .jua { font-size: 18px !important; }
+  .loginbox .lrow { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .loginbox input { font-size: 16px; } /* 16px보다 작으면 아이폰이 확대함 */
+  .loginbox .lrow .school { grid-column: 1 / -1; }
+  .loginbox .lrow .btn { grid-column: 1 / -1; }
+  .diffs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .diffs .dl { grid-column: 1 / -1; }
+  .hl { padding: 8px 10px; font-size: 14px; }
+  .badges span { font-size: 14px; }
+  .notebook .nbgrid { grid-template-columns: minmax(0, 1fr); }
+  .nbn { min-width: 30px; }
+  .nbinfo { gap: 8px; } .nbinfo .nbbig { font-size: 30px; min-width: 38px; }
+  /* 튜토리얼 말풍선 */
+  .tut { grid-template-columns: 38px minmax(0, 1fr); padding: 6px 10px; gap: 2px 8px; }
+  .tut svg { width: 38px; height: 38px; }
+  .tut .txt { font-size: 14px; }
+  .tut .btns { grid-column: 1 / -1; justify-content: flex-end; }
+  .tut.float { bottom: 8px; width: calc(100vw - 16px); }
+  .toast { bottom: 12px; max-width: calc(100vw - 24px); text-align: center; border-radius: 16px; }
+
+  /* 전투: 화면 하나에 꽉 차게 */
+  .app.battling { height: 100dvh; min-height: 0; grid-template-rows: auto auto minmax(0, 1fr); grid-template-areas: "top" "strip" "center"; }
+  .app.battling .left, .app.battling .right, .app.battling .shopbar, .app.battling .lv, .app.battling .nb, .app.battling .brk { display: none; }
+  .bv-host, .app.battling .bv-host { padding: 6px; height: 100%; }
+  .bv { gap: 4px; }
+  .bv-head { flex-wrap: wrap; gap: 4px 8px; }
+  .bv-beat { min-width: 54px; padding: 0 6px; font-size: 12px; }
+  .bv-beat b { font-size: 22px; }
+  .bv-cap { flex: 1 1 calc(100% - 70px); font-size: 13px; min-height: 34px; }
+  .bv-cap b { font-size: 15px; }
+  .bv-ctrl { width: 100%; justify-content: flex-end; }
+  .bv-ctrl .btn { padding: 4px 9px; font-size: 13px; }
+  .bv-next { font-size: 12px; }
+  .bv-strip { grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 2px 1px; }
+  .sb span { font-size: 8px; }
+  .sb i { font-size: 5px; height: 6px; }
+  .bv-label { font-size: 12px; }
+  .bv-grid { gap: 2px 3px; grid-template-rows: repeat(2, minmax(0, 1fr)) 20px repeat(2, minmax(0, 1fr)); }
+  .bv-mid { font-size: 10px; padding: 0 4px; }
+  .bf { width: 100%; max-width: 72px; }
+  .bf-art svg { width: 42px; height: 42px; }
+  .bf.minion { width: 50%; }
+  .bf.minion .bf-art svg { width: 26px; height: 26px; }
+  .bf-bar, .bf-shbar { width: 40px; }
+  .bf.minion .bf-bar, .bf.minion .bf-shbar { width: 26px; }
+  .bf-st { font-size: 13px; top: 6px; }
+  .bubble { font-size: 10.5px; padding: 2px 6px; }
+  .pop.dmg { font-size: 17px; } .pop.note { font-size: 18px; } .pop.heal { font-size: 15px; } .pop.basic { font-size: 12px; }
+  .bv-banner { font-size: 18px; padding: 3px 10px; }
+  .bv-banner.mine { font-size: 15px; } .bv-banner.foe { font-size: 13px; }
+  .bv-banner small { font-size: 13px; }
+  .bv-banner.end { font-size: 24px; padding: 12px 16px; white-space: normal; text-align: center; width: max-content; max-width: 92%; }
+  .bv-say { width: 94%; grid-template-columns: 40px minmax(0, 1fr); padding: 8px 10px; top: 22%; }
+  .bv-say svg { width: 40px; height: 40px; }
+  .bv-say .txt { font-size: 14px; }
+  .bv-log { min-height: 0; max-height: 62px; overflow: hidden; font-size: 11.5px; padding: 3px 8px; }
 }

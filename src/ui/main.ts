@@ -36,10 +36,13 @@ let selected:
   | { kind: 'unit'; uid: number }
   | { kind: 'shop'; index: number }
   | { kind: 'scout'; pid: number }
+  | { kind: 'syn'; key: string }
   | { kind: 'item'; index: number }
   | { kind: 'equip'; index: number; uid: number }
   | null = null;
 let battle: BattleView | null = null;
+/** 휴대폰: 친구·돌을 고르면 아래 작은 줄만, [자세히]를 눌러야 큰 설명 판(판을 가리지 않게) */
+let detailOpen = false;
 let botsPreppedRound = -1;
 /** 이번 판에서 만든 가장 큰 합창(게임 끝 '오늘의 수학 발견') */
 let bestChorus: (Moment & { round: number }) | null = null;
@@ -134,7 +137,7 @@ function roleEffect(r: RoleId, tierIdx: number): string {
 
 function synPanels(p: PlayerState) {
   const s = synergy(p);
-  const famRows = FAM_ORDER.map((f) => {
+  const famRow = (f: FamilyId) => {
     const { count, tier } = s.fam[f];
     const tiers = DEFAULT_CONFIG.famTiers[f];
     const members = UNIT_IDS.filter((n) => familiesOf(n).includes(f));
@@ -146,8 +149,8 @@ function synPanels(p: PlayerState) {
       <div class="steps">${tiers.map((t, i) => `<span class="${count >= t ? 'lit' : ''}">${t}명 ${famEffect(f, i)}</span>`).join('')}</div>
       <div class="members">${members.map((n) => `<span class="${s.boardNums.has(n) ? 'mb-on' : s.benchNums.has(n) ? 'mb-wait' : ''}">${n}</span>`).join('')}${extra.map((n) => `<span class="mb-stone ${s.boardNums.has(n) ? 'mb-on' : 'mb-wait'}" title="숫자 돌로 생긴 숫자">${n}</span>`).join('')}</div>
     </div>`;
-  }).join('');
-  const roleRows = ROLE_ORDER.map((r) => {
+  };
+  const roleRow = (r: RoleId) => {
     const { count, tier } = s.role[r];
     const members = UNIT_IDS.filter((n) => UNITS[n].role === r);
     return `<div class="syn ${tier ? 'on' : ''}" style="--c:${ROLE_COLOR[r]}">
@@ -156,10 +159,22 @@ function synPanels(p: PlayerState) {
       <div class="steps">${DEFAULT_CONFIG.roleTiers.map((t, i) => `<span class="${count >= t ? 'lit' : ''}">${t}명 ${roleEffect(r, i)}</span>`).join('')}</div>
       <div class="members">${members.map((n) => `<span class="${s.boardChars.has(n) ? 'mb-on' : s.benchChars.has(n) ? 'mb-wait' : ''}">${n}</span>`).join('')}</div>
     </div>`;
-  }).join('');
+  };
   return {
-    left: `<div class="ptitle">숫자 가문 <small>숫자가 정해요 🔢</small></div>${famRows}`,
-    right: `<div class="ptitle">직업 <small>캐릭터가 정해요 🧑</small></div>${roleRows}`,
+    left: `<div class="ptitle">숫자 가문 <small>숫자가 정해요 🔢</small></div>${FAM_ORDER.map(famRow).join('')}`,
+    right: `<div class="ptitle">직업 <small>캐릭터가 정해요 🧑</small></div>${ROLE_ORDER.map(roleRow).join('')}`,
+    /** 휴대폰: 위쪽 한 줄 요약(누르면 설명 카드) */
+    strip: [
+      ...FAM_ORDER.map((f) => ({ key: `fam:${f}`, icon: famIcon(f, 15), name: FAMILIES[f].name, c: FAM_COLOR[f], ...s.fam[f] })),
+      ...ROLE_ORDER.map((r) => ({ key: `role:${r}`, icon: roleIcon(r, 15), name: ROLES[r].name, c: ROLE_COLOR[r], ...s.role[r] })),
+    ]
+      .sort((a, b) => Number(b.tier > 0) - Number(a.tier > 0) || Number(b.count > 0) - Number(a.count > 0))
+      .map((x) => `<button class="sc-chip ${x.tier ? 'on' : x.count ? 'has' : ''}" style="--c:${x.c}" data-action="syn" data-key="${x.key}">${x.icon}${x.name} <b>${x.count}</b></button>`)
+      .join(''),
+    card: (key: string) => {
+      const [kind, id] = key.split(':');
+      return kind === 'fam' ? famRow(id as FamilyId) : roleRow(id as RoleId);
+    },
   };
 }
 
@@ -258,7 +273,15 @@ function benchHtml(p: PlayerState) {
 function detailHtml(p: PlayerState) {
   if (!selected) return '';
   if (selected.kind === 'scout') return scoutHtml(selected.pid);
-  if (selected.kind === 'item') return itemHtml(p, selected.index);
+  if (selected.kind === 'syn') {
+    const kind = selected.key.startsWith('fam') ? '숫자 가문 (숫자가 정해요)' : '직업 (캐릭터가 정해요)';
+    return `<aside class="drawer small synsheet"><button class="btn small ghost close" data-action="close">닫기</button><div class="sub">${kind}</div>${synPanels(p).card(selected.key)}</aside>`;
+  }
+  if (selected.kind === 'item') {
+    const it = p.bag[selected.index];
+    if (it === undefined) return '';
+    return `${miniBar(`<b class="item ${isStoneItem(it) ? 'stone' : 'treasure'}">${ITEM_LABEL[it]}</b><span><b>${esc(ITEM_NAME[it])}</b> ${esc(ITEM_HELP[it])}<br><small>끼울 친구를 눌러요</small></span>`, false)}${itemHtml(p, selected.index)}`;
+  }
   if (selected.kind === 'equip') return equipHtml(p, selected.index, selected.uid);
   let char: number;
   let star = 1;
@@ -287,7 +310,10 @@ function detailHtml(p: PlayerState) {
         return i < open ? '<span class="islot">빈 칸 — 가방의 돌을 눌러 끼워요</span>' : `<span class="islot lock">🔒 ${secondSlotRound(g!)}라운드에 열려요</span>`;
       }).join('')
     : '<span class="sub">사서 데려오면 칸 2개(두 번째는 6라운드부터)</span>';
-  return `<aside class="drawer">
+  const mini = owned
+    ? miniBar(`${charArt(char, 40, { star: star as 1 | 2 | 3, num, noGems: true })}<span><b>${num} ${esc(u.name)}</b> ${stars(star)}<br><small>빈칸이나 다른 친구를 누르면 옮겨요</small></span>`, true, `<button class="btn small" data-action="sell">팔기 +${owned.value}</button>`)
+    : '';
+  return `${mini}<aside class="drawer ${owned ? 'm-hide' : ''}">
     <button class="btn small ghost close" data-action="close">닫기</button>
     <div style="display:flex;gap:10px;align-items:center">${charArt(char, 84, { star: star as 1 | 2 | 3, num })}
       <div><h3>${num !== char ? `${char} → <span style="color:#ffe27a">${num}</span>` : char} ${esc(u.name)}</h3><div class="sub">${esc(u.title)} · ${star}성 · ${u.cost}골드</div><div class="sub">"${esc(u.line)}"</div></div></div>
@@ -314,10 +340,15 @@ function numberExpr(u: UnitInst): string {
   return checkItems(u.char, u.items).expr;
 }
 
+/** 휴대폰 아래 작은 줄(넓은 화면에서는 안 보임) */
+function miniBar(body: string, more: boolean, extra = ''): string {
+  return `<div class="minibar">${body}<span class="mb-btns">${more ? '<button class="btn small ghost" data-action="more">자세히</button>' : ''}${extra}<button class="btn small ghost" data-action="close" aria-label="닫기">✕</button></span></div>`;
+}
+
 function itemHtml(p: PlayerState, index: number): string {
   const it = p.bag[index];
   if (it === undefined) return '';
-  return `<aside class="drawer small">
+  return `<aside class="drawer small m-hide">
     <button class="btn small ghost close" data-action="close">닫기</button>
     <h3>${ITEM_LABEL[it]} ${esc(ITEM_NAME[it])}</h3>
     <div class="sub">${esc(ITEM_HELP[it])}</div>
@@ -382,7 +413,7 @@ function scoutsHtml(p: PlayerState) {
     return `<button class="scout ${vs ? 'vs' : ''} ${q.id === p.id ? 'me' : ''}" data-action="scout" data-pid="${q.id}">${av}<span>${esc(q.id === p.id ? '나' : q.name.replace('컴퓨터 ', ''))}</span>${diff}${tag}</button>`;
   });
   if (o?.kind === 'pve') items.push(`<button class="scout vs" data-action="scout" data-pid="-1">👾<span>${esc(o.name)}</span><em>이번 상대</em></button>`);
-  return `<div class="scouts" title="얼굴을 누르면 그 판을 구경해요">${items.join('')}</div><span class="sub" style="color:var(--muted);flex:none">👀 눌러서 구경</span>`;
+  return `<div class="scouts" title="얼굴을 누르면 그 판을 구경해요">${items.join('')}</div><span class="sub hintlabel" style="color:var(--muted);flex:none">👀 눌러서 구경</span>`;
 }
 
 function scoutHtml(pid: number): string {
@@ -450,15 +481,15 @@ function modalHtml(): string {
       <p>숫자 친구를 사 모아 덱을 짜요. <b>3번 친구는 3단 박(3·6·9…)에 노래</b>하고, 같은 박에 여럿이 노래하면 <b>합창!</b> 가문은 숫자가, 직업은 캐릭터가 정해요.</p>
       ${tutorialDoneLocal() || myRecord()?.tutorial
         ? '<p style="margin:6px 0"><button class="btn small ghost" data-action="tutorial">📖 튜토리얼 다시 하기</button></p>'
-        : '<button class="choice tutbtn" data-action="tutorial"><b class="jua" style="font-size:22px">📖 처음이라면: 튜토리얼 한 판</b><br>하나쌤과 5라운드 (약 7분) — 규칙을 하나씩 해 보며 배워요</button>'}
-      <div class="diffs">컴퓨터 난이도
+        : '<button class="choice tutbtn" data-action="tutorial"><b class="jua" style="font-size:22px">📖 처음이라면: 튜토리얼 한 판</b><br>하나쌤과 5라운드 <span class="nw">(약 7분)</span><br>규칙을 하나씩 해 보며 배워요</button>'}
+      <div class="diffs"><span class="dl">컴퓨터 난이도</span>
         ${([['easy', '쉬움', '똑딱이 · 처음이라면'], ['normal', '보통', '척척이 · 가문을 노려요'], ['hard', '어려움', '번뜩이 · 미리 겨뤄 봐요'], ['mix', '섞어서', '쉬움·보통·어려움 한 명씩']] as [StartDiff, string, string][])
           .map(([d, nm, sub]) => `<button class="diff ${startDiff === d ? 'on' : ''}" data-action="diff" data-d="${d}"><b class="jua">${nm}</b><small>${sub}</small></button>`).join('')}
       </div>
       <div class="choices">
-        <button class="choice" data-action="start" data-bots="3" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 3명과</b><br>12라운드 (약 12분)</button>
+        <button class="choice" data-action="start" data-bots="3" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 3명과</b><br>12라운드 <span class="nw">(약 12분)</span></button>
         <button class="choice" data-action="start" data-bots="1" data-short="0"><b class="jua" style="font-size:20px">컴퓨터 1명과</b><br>12라운드</button>
-        <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 (약 8분)</button>
+        <button class="choice" data-action="start" data-bots="3" data-short="1"><b class="jua" style="font-size:20px">짧은 판</b><br>8라운드 <span class="nw">(약 8분)</span></button>
         ${getAuth() ? '<button class="choice" data-action="startghost"><b class="jua" style="font-size:20px">👻 친구 유령과</b><br>우리 학교 친구가 둔 판</button>' : ''}
       </div>
       <p class="sub" style="color:var(--muted)">몬스터를 이기면 숫자 돌을 받아요. 돌을 친구에게 끼우면 숫자가 바뀌어요.</p>
@@ -537,22 +568,29 @@ function render() {
     ? `<div class="panel bv-host" id="bvhost"></div>`
     : `${tutDocked() ? `<div class="panel tut dock">${tutBubbleInner()}</div>` : tipDocked(p) ? tipDockHtml(p) : `<div class="panel opp">${scoutsHtml(p)}</div>`}
       <div class="panel board">${boardHtml(p)}</div>
-      <div class="cap">놓을 수 있는 자리 <b>${'●'.repeat(boardCount(p))}${'○'.repeat(Math.max(0, p.level - boardCount(p)))}</b> (레벨 ${p.level} → ${p.level}명) · 친구를 누르고 → 빈칸을 누르면 옮겨요</div>
+      <div class="cap">놓을 수 있는 자리 <b>${'●'.repeat(boardCount(p))}${'○'.repeat(Math.max(0, p.level - boardCount(p)))}</b> (레벨 ${p.level} → ${p.level}명)<span class="hint"> · 친구를 누르고 → 빈칸을 누르면 옮겨요</span></div>
       <div class="panel bench">${benchHtml(p)}</div>`;
+  // 다시 그려도 옆으로 넘긴 상점·구경 줄, 설명 판의 스크롤은 그대로(휴대폰에서 특히)
+  const kept = KEEP_SCROLL.map((sel) => {
+    const el = app.querySelector(sel);
+    return el ? [el.scrollLeft, el.scrollTop] : null;
+  });
   app.innerHTML = `
   <div class="app ${battle ? 'battling' : ''}">
     <header class="top">
       <div class="logo">숫자체스<small>합창 대작전</small></div>
-      <div class="round"><b class="jua" style="font-size:20px">${g.round}라운드</b> <span class="sub" style="color:var(--muted)">(${g.rounds.length}라운드까지)</span>
+      <div class="round"><b class="jua" style="font-size:20px">${g.round}라운드</b> <span class="sub of" style="color:var(--muted)">(${g.rounds.length}라운드까지)</span>
         <span class="tag ${plan.kind}">${plan.kind === 'pve' ? '몬스터' : '친구 대결'}</span></div>
       <div class="stat">🏅<span class="big">${p.medals}</span><small>메달</small></div>
-      <div class="stat">🪙<span class="big" style="color:var(--gold)">${p.gold}</span><small>다음 수입 = ${inc.base} + 저금 ${inc.interest}${inc.streak ? ` + ${p.winStreak >= 2 ? '연승' : '연패'} ${inc.streak}` : ''} = ${inc.total}</small></div>
+      <div class="stat">🪙<span class="big" style="color:var(--gold)">${p.gold}</span><small class="inc">다음 수입 = ${inc.base} + 저금 ${inc.interest}${inc.streak ? ` + ${p.winStreak >= 2 ? '연승' : '연패'} ${inc.streak}` : ''} = ${inc.total}</small><small class="inc-m">다음 +${inc.total}</small></div>
       <div class="lv"><b class="jua" style="font-size:18px">레벨 ${p.level}</b>
         ${p.level < ECON.maxLevel ? `<span class="xpbar"><i style="width:${(100 * p.xp) / need}%"></i></span><small class="sub" style="color:var(--muted)">${p.xp}/${need}</small>
-        <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업 +4 (4골드)</button>` : '<small>최고 레벨</small>'}</div>
-      <button class="btn small ghost" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘 수첩</button>
+        <button class="btn small" data-action="xp" ${p.gold < ECON.xpCost ? 'disabled' : ''}>레벨업<span class="xp4"> +4</span> (4골드)</button>` : '<small>최고 레벨</small>'}</div>
+      <button class="btn small ghost nb" data-action="notebook" title="배수·약수·공약수·공배수, 본 말풍선 다시 보기">📘<span class="nbt"> 수첩</span></button>
       ${battle ? '<span class="ready tag" style="font-size:16px">🎵 전투 중…</span>' : '<button class="btn gold ready" data-action="ready">준비 완료 ▶</button>'}
+      <i class="brk"></i>
     </header>
+    <nav class="synstrip">${syn.strip}</nav>
     <aside class="panel left">${syn.left}</aside>
     <section class="center">${center}</section>
     <aside class="panel right">${syn.right}</aside>
@@ -573,13 +611,30 @@ function render() {
   ${detailHtml(p)}
   ${modalHtml()}
   ${toastMsg ? `<div class="toast">${esc(toastMsg)}</div>` : ''}`;
+  app.classList.toggle('detail-open', detailOpen);
+  // 휴대폰: 위에 붙은 막대 높이(하나쌤 말풍선을 그 바로 아래에 붙이려고)
+  const top = app.querySelector<HTMLElement>('.top');
+  if (top) document.documentElement.style.setProperty('--toph', `${top.offsetHeight}px`);
+  KEEP_SCROLL.forEach((sel, i) => {
+    const el = app.querySelector(sel);
+    const k = kept[i];
+    if (el && k) [el.scrollLeft, el.scrollTop] = k;
+  });
   if (battle) document.getElementById('bvhost')?.appendChild(battle.root);
   const step = tutStep();
   if (step && tutBubbleVisible()) {
     if (step.afterBattle) app.insertAdjacentHTML('beforeend', `<div class="tut float">${tutBubbleInner()}</div>`);
     if (step.highlight) document.querySelectorAll(step.highlight).forEach((el) => el.classList.add('tut-hl'));
+    // 새 단계에서 가리키는 곳이 화면 밖(휴대폰: 옆으로 넘긴 상점 등)이면 보이게
+    if (step.highlight && hlShown !== tut!.step) {
+      hlShown = tut!.step;
+      document.querySelector(step.highlight)?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    }
   }
 }
+
+const KEEP_SCROLL = ['.cards', '.scouts', '.synstrip', '.left', '.right'];
+let hlShown = -1;
 
 // ---------------- 행동 ----------------
 function check(r: { ok: boolean; reason?: string }) {
@@ -725,7 +780,13 @@ app.addEventListener('click', (ev) => {
       return render();
     }
   }
+  const selBefore = JSON.stringify(selected);
   switch (a) {
+    case 'syn': {
+      const key = el.dataset.key!;
+      selected = selected?.kind === 'syn' && selected.key === key ? null : { kind: 'syn', key };
+      break;
+    }
     case 'scout': {
       const pid = Number(el.dataset.pid);
       selected = selected?.kind === 'scout' && selected.pid === pid ? null : { kind: 'scout', pid };
@@ -809,6 +870,9 @@ app.addEventListener('click', (ev) => {
     case 'close':
       selected = null;
       break;
+    case 'more':
+      detailOpen = true;
+      break;
     case 'reroll':
       if (check(reroll(g, p)) && tut) tut.rerolled = true;
       break;
@@ -844,6 +908,7 @@ app.addEventListener('click', (ev) => {
   }
   prepBots();
   track();
+  if (JSON.stringify(selected) !== selBefore) detailOpen = false;
   tutorialCheck();
   render();
 });
@@ -894,6 +959,7 @@ function startTutorial() {
   battle = null;
   g = createTutorial();
   tut = { step: 0, rerolled: false, said: new Set() };
+  hlShown = -1;
   selected = null;
   modal = null;
   botsPreppedRound = -1;
