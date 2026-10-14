@@ -9,7 +9,7 @@ import { SCHOOLS_PATH, indexSchools, shortSchool, type SchoolIndex } from '../sr
 import { UNITS } from '../src/engine/data';
 import { validBoard } from '../src/shared/board';
 import { rankDelta } from '../src/shared/rank';
-import { ONLINE, ROOM_ID, type LobbyRoom, type RankRow, type RoomKind } from '../src/shared/online';
+import { ROOM_ID, type LobbyRoom, type RankRow } from '../src/shared/online';
 import type { Env, Who } from './env';
 export { Room } from './room';
 
@@ -156,7 +156,7 @@ export class Store extends DurableObject<Env> {
         n INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL, updated INTEGER NOT NULL
       );
     `);
-    // 방 종류(보통 방·선생님 반 대기실·모둠 방), 학교, 모둠 친구 칸(예전 표에 없으면 더함)
+    // 방을 만든 학교 칸(우리 학교 방 표시). kind·members는 예전에 쓰던 칸(그대로 둠)
     const roomCols = this.sql.exec<{ name: string }>('PRAGMA table_info(rooms)').toArray().map((c) => c.name);
     if (!roomCols.includes('kind')) {
       this.sql.exec(`
@@ -444,19 +444,14 @@ export class Store extends DurableObject<Env> {
     return { ...who, schoolName: school ? shortSchool(school.name) : '', points: Number(p?.points) || 0, teacher: isAdmin(who.school, who.nick) };
   }
 
-  /** 기다리는 방 목록(시작한 방·오래된 방·모둠 방은 안 보임). 우리 학교 방 먼저, 선생님 반 대기실은 그 학교만 */
+  /** 기다리는 방 목록(시작한 방·오래된 방은 안 보임). 모든 학생·선생님이 같은 목록을 씀. 사람이 많은 방 먼저 */
   async listRooms(token: string): Promise<{ ok: true; rooms: LobbyRoom[] }> {
     const who = token ? await this.accountOf(token) : null;
-    const rows = this.sql.exec<{ id: string; title: string; n: number; size: number; short: number; kind: string; school: string }>(
-      "SELECT id, title, n, size, short, kind, school FROM rooms WHERE updated > ? AND kind != 'group' AND n < size ORDER BY updated DESC LIMIT 40",
+    const rows = this.sql.exec<{ id: string; title: string; n: number; size: number; short: number; school: string }>(
+      'SELECT id, title, n, size, short, school FROM rooms WHERE updated > ? AND n < size ORDER BY n DESC, updated DESC LIMIT 20',
       Date.now() - 20 * 60_000,
     ).toArray();
-    const rooms = rows
-      .filter((r) => r.kind !== 'class' || r.school === who?.school)
-      .map((r) => ({ id: r.id, title: r.title, n: r.n, size: r.size, short: !!r.short, kind: r.kind as RoomKind, mine: !!who && r.school === who.school }))
-      .sort((a, b) => Number(b.kind === 'class') - Number(a.kind === 'class') || Number(b.mine) - Number(a.mine) || b.n - a.n)
-      .slice(0, 20);
-    return { ok: true, rooms };
+    return { ok: true, rooms: rows.map((r) => ({ id: r.id, title: r.title, n: r.n, size: r.size, short: !!r.short, mine: !!who && r.school === who.school })) };
   }
 
   async createRoom(token: string, body: Record<string, unknown>, ip: string) {
@@ -465,15 +460,10 @@ export class Store extends DurableObject<Env> {
     if (await this.limited(ip, 'room', 120, 3600 * 1000)) return { ok: false, error: '방을 너무 많이 만들었어요. 잠시 후에 해 주세요.' };
     const now = Date.now();
     this.sql.exec('DELETE FROM rooms WHERE updated < ?', now - 3600 * 1000); // 한 시간 지난 방 정리
-    const cls = body.kind === 'class';
-    if (cls && !who.teacher) return { ok: false, error: '선생님 계정만 반 대기실을 열 수 있어요.' };
-    const size = cls ? ONLINE.classMax : Math.max(2, Math.min(4, Number(body.size) || 4));
+    const size = Math.max(2, Math.min(4, Number(body.size) || 4));
     const id = this.newRoomId();
-    const title = cls ? `🍎 ${who.nick} 선생님 반 대기실` : `${who.schoolName} ${who.nick}의 방`;
-    this.sql.exec(
-      'INSERT INTO rooms (id, title, short, size, n, created, updated, kind, school) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)',
-      id, title, body.short ? 1 : 0, size, now, now, cls ? 'class' : 'room', who.school,
-    );
+    const title = `${who.schoolName} ${who.nick}${who.teacher ? ' 선생님' : ''}의 방`;
+    this.sql.exec('INSERT INTO rooms (id, title, short, size, n, created, updated, school) VALUES (?, ?, ?, ?, 0, ?, ?, ?)', id, title, body.short ? 1 : 0, size, now, now, who.school);
     return { ok: true, id };
   }
 
@@ -485,29 +475,11 @@ export class Store extends DurableObject<Env> {
     return id;
   }
 
-  /** 반 대기실(Room) → 저장소 RPC: 선생님이 나눈 모둠 방(목록에 안 보임, 정해진 친구만) */
-  createGroupRoom(o: { school: string; title: string; short: boolean; members: { school: string; nick: string }[] }): string {
-    const id = this.newRoomId();
-    const now = Date.now();
-    this.sql.exec(
-      "INSERT INTO rooms (id, title, short, size, n, created, updated, kind, school, members) VALUES (?, ?, ?, 4, 0, ?, ?, 'group', ?, ?)",
-      id, o.title, o.short ? 1 : 0, now, now, o.school, JSON.stringify(o.members.slice(0, 4)),
-    );
-    return id;
-  }
-
   /** 방(Room) → 저장소 RPC */
-  roomInfo(id: string): { kind: RoomKind; short: boolean; size: number; school: string; members: { school: string; nick: string }[] | null } | null {
+  roomInfo(id: string): { short: boolean; size: number } | null {
     if (!ROOM_ID.test(id)) return null;
-    const r = this.sql.exec<{ short: number; size: number; kind: string; school: string; members: string }>('SELECT short, size, kind, school, members FROM rooms WHERE id = ?', id).toArray()[0];
-    if (!r) return null;
-    let members: { school: string; nick: string }[] | null = null;
-    try {
-      members = r.members ? JSON.parse(r.members) : null;
-    } catch {
-      members = null;
-    }
-    return { kind: (r.kind || 'room') as RoomKind, short: !!r.short, size: r.size, school: r.school, members };
+    const r = this.sql.exec<{ short: number; size: number }>('SELECT short, size FROM rooms WHERE id = ?', id).toArray()[0];
+    return r ? { short: !!r.short, size: r.size } : null;
   }
   roomUpdate(id: string, n: number) {
     this.sql.exec('UPDATE rooms SET n = ?, updated = ? WHERE id = ?', n, Date.now(), id);

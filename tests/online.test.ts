@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { advance, autoFill, chooseFreePick, chooseReward, createOnlineGame, currentPlan, pairings, resolveRound, toBattleBoard } from '../src/game/game';
 import { botFreePick, botPrep, botRewards } from '../src/game/bot';
 import type { Difficulty } from '../src/game/types';
-import { splitGroups } from '../src/shared/online';
 
 /** 서버(모두 원격) 1개 + 기기 n개: 기기는 자기 자리만 두고, 서버가 모은 보드로 결과를 똑같이 계산하는지 */
 function simulate(n: number, short: boolean, seed: number) {
@@ -93,19 +92,3 @@ describe('온라인 대결: 빈자리 컴퓨터(방장 기기)', () => {
   });
 });
 
-describe('선생님 반 시작: 모둠 나누기', () => {
-  it('2~4명으로 고르게(크기 차이 1 이하)', () => {
-    expect(splitGroups(1)).toEqual([1]);
-    expect(splitGroups(2)).toEqual([2]);
-    expect(splitGroups(5)).toEqual([3, 2]);
-    expect(splitGroups(9)).toEqual([3, 3, 3]);
-    expect(splitGroups(25)).toEqual([4, 4, 4, 4, 3, 3, 3]);
-    for (let n = 2; n <= 40; n++) {
-      const g = splitGroups(n);
-      expect(g.reduce((a, b) => a + b, 0)).toBe(n);
-      expect(Math.max(...g) - Math.min(...g)).toBeLessThanOrEqual(1);
-      expect(Math.min(...g)).toBeGreaterThanOrEqual(2);
-      expect(Math.max(...g)).toBeLessThanOrEqual(4);
-    }
-  });
-});

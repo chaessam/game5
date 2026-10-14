@@ -799,16 +799,8 @@ app.addEventListener('click', (ev) => {
     void quickJoin();
     return;
   }
-  if (a === 'mkclass') {
-    void makeRoom(false, 'class');
-    return;
-  }
   if (a === 'fill') {
     online?.conn.send({ t: 'fill', on: el.dataset.on === '1' });
-    return;
-  }
-  if (a === 'classstart') {
-    online?.conn.send({ t: 'classstart', short: el.dataset.short === '1' });
     return;
   }
   if (a === 'emote') {
@@ -1070,8 +1062,8 @@ async function refreshRooms(manual: boolean) {
   if (!r.ok && manual) toast(r.error ?? '방 목록을 불러오지 못했어요');
   if (modal?.type === 'lobby') render();
 }
-async function makeRoom(short: boolean, kind: 'room' | 'class' = 'room') {
-  const r = await createRoom(short, kind);
+async function makeRoom(short: boolean) {
+  const r = await createRoom(short);
   if (!r.ok) {
     toast(r.error ?? '방을 만들지 못했어요');
     return render();
@@ -1098,11 +1090,11 @@ function leaveOnline() {
   clearSavedOnline();
 }
 
-/** 빠른 입장: 우리 학교 방 → 사람이 많은 방 먼저, 없으면 새 방 */
+/** 빠른 입장: 사람이 많은 방 먼저, 없으면 새 방 */
 async function quickJoin() {
   const r = await listRooms();
-  const rooms = (r.ok ? r.rooms : []).filter((x) => x.kind === 'room' && x.n < x.size);
-  const pick = rooms.sort((a, b) => Number(b.mine) - Number(a.mine) || b.n - a.n)[0];
+  const rooms = (r.ok ? r.rooms : []).filter((x) => x.n < x.size);
+  const pick = rooms.sort((a, b) => b.n - a.n)[0];
   if (pick) joinRoom(pick.id);
   else {
     toast('열린 방이 없어서 새 방을 만들었어요. 친구가 오면 자동으로 시작해요!');
@@ -1231,11 +1223,6 @@ function onServer(o: NonNullable<typeof online>, m: ServerMsg) {
     case 'emote':
       showEmote(m.nick, m.id, m.seat === o.you);
       return;
-    case 'goto':
-      // 선생님이 모둠을 나눔 → 모둠 방으로
-      toast('선생님이 모둠을 정했어요! 모둠 방으로 가요');
-      joinRoom(m.id);
-      break;
     case 'notice':
       toast(m.text);
       break;
@@ -1414,7 +1401,7 @@ function lobbyHtml(): string {
   const rooms = lobbyRooms === null
     ? '<div class="sub">불러오는 중…</div>'
     : lobbyRooms.length
-      ? lobbyRooms.map((r) => `<button class="roomrow ${r.kind === 'class' ? 'cls' : ''}" data-action="joinroom" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.kind === 'class' ? '선생님이 모둠을 나눠 시작해요' : r.short ? '짧은 판 · 8라운드' : '12라운드'}${r.mine && r.kind !== 'class' ? ' · <span class="tag">우리 학교</span>' : ''}</small></span><span class="cnt">${r.kind === 'class' ? `${r.n}명` : `${r.n}/${r.size}명`}</span><em>들어가기 ▶</em></button>`).join('')
+      ? lobbyRooms.map((r) => `<button class="roomrow" data-action="joinroom" data-id="${r.id}"><span class="rt"><b>${esc(r.title)}</b><small>${r.short ? '짧은 판 · 8라운드' : '12라운드'}${r.mine ? ' · <span class="tag">우리 학교</span>' : ''}</small></span><span class="cnt">${r.n}/${r.size}명</span><em>들어가기 ▶</em></button>`).join('')
       : '<div class="sub">아직 열린 방이 없어요. 방을 만들고 친구를 불러요!</div>';
   return `<div class="modal"><div class="box lobby">
     <button class="btn small ghost close" data-action="lobbyback" style="float:right">← 처음 화면</button>
@@ -1425,7 +1412,6 @@ function lobbyHtml(): string {
     <div class="rooms">${rooms}</div>
     <div class="lobbybtns">
       <button class="btn gold" data-action="quickjoin">⚡ 빠른 입장</button>
-      ${getAuth()?.teacher ? '<button class="btn on" data-action="mkclass">🍎 우리 반 대기실 열기</button>' : ''}
       <button class="btn" data-action="mkroom" data-short="0">＋ 방 만들기 (12라운드)</button>
       <button class="btn ghost" data-action="mkroom" data-short="1">＋ 짧은 판 방 (8라운드)</button>
       <button class="btn ghost" data-action="refreshrooms">↻ 새로고침</button>
@@ -1442,36 +1428,19 @@ function roomHtml(): string {
   }
   const left = o.autoAt === null ? null : o.autoAt - Date.now();
   const auto = left === null ? '' : `<div class="hl autostart">⏳ 자동 시작까지 <b class="jua nc-auto">${fmtLeft(left)}</b></div>`;
-  const seatHtml = (s: RoomInfo['seats'][number], i: number) => `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${s.teacher ? '<em>선생님</em>' : tierBadge(s.points, true)}${i === r.host && r.kind !== 'class' ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`;
+  const seatHtml = (s: RoomInfo['seats'][number], i: number) => `<div class="seat ${i === o.you ? 'me' : ''}"><b>${esc(s.nick)}</b><small>${esc(s.schoolName)}</small>${tierBadge(s.points, true)}${s.teacher ? '<em>선생님</em>' : ''}${i === r.host ? '<em>방장</em>' : ''}${s.online ? '' : '<small class="off">연결 끊김</small>'}</div>`;
   const humans = r.seats.filter((s) => !s.bot).length;
-  if (r.kind === 'class') {
-    const teacher = !!r.seats[o.you]?.teacher;
-    const students = r.seats.filter((s) => !s.teacher);
-    return `<div class="modal"><div class="box roombox">
-      <h2>🍎 우리 반 대기실</h2>
-      ${teacher
-        ? `<div class="sub">학생들이 ⚔️ 온라인 대결 → 목록 맨 위 '선생님 반 대기실'로 들어와요. 다 모이면 시작을 눌러 주세요. 2~4명씩 고르게 모둠을 나누고, 빈자리는 컴퓨터가 채워요.</div>
-          <div class="hl">들어온 학생 <b class="jua">${students.length}명</b>${r.groups ? ` · 지금까지 시작한 모둠 ${r.groups}개` : ''}</div>
-          <div class="chips">${students.map((s) => `<span class="schip">${esc(s.nick)}${s.online ? '' : ' (끊김)'}</span>`).join('') || '<span class="sub">아직 없어요</span>'}</div>
-          <div class="lobbybtns"><button class="btn gold bigbtn" data-action="classstart" data-short="0" ${students.length ? '' : 'disabled'}>▶ 모둠 나눠 시작 (12라운드)</button><button class="btn" data-action="classstart" data-short="1" ${students.length ? '' : 'disabled'}>▶ 짧은 판으로 (8라운드)</button></div>
-          <p class="sub">늦게 온 학생은 대기실에 모였다가 다시 시작을 누르면 새 모둠으로 시작해요. 모둠이 1명이면 컴퓨터와 연습 판(점수 없음).</p>`
-        : `<div class="hl">선생님이 시작하면 2~4명씩 모둠이 정해지고 바로 게임이 시작돼요. (지금 ${students.length}명)</div>`}
-      ${emoteRow()}
-      <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>
-    </div></div>`;
-  }
   const host = o.you === r.host;
   const seats = Array.from({ length: r.size }, (_, i) => r.seats[i]);
-  const group = r.kind === 'group';
   return `<div class="modal"><div class="box roombox">
-    <h2>⚔️ ${group ? '우리 모둠' : r.short ? '짧은 판 방' : '12라운드 방'} <span class="sub code">${r.short ? '8라운드' : '12라운드'}</span></h2>
-    <div class="sub">${group ? '선생님이 정한 모둠이에요. 모두 모이면 바로 시작해요.' : '2~4명 · 사람이 2명 모이면 1분 뒤, 꽉 차면 바로 시작해요(방장은 먼저 시작 가능).'} 라운드마다 준비 시간이 있어요.</div>
+    <h2>⚔️ ${r.short ? '짧은 판 방' : '12라운드 방'} <span class="sub code">${r.short ? '8라운드' : '12라운드'}</span></h2>
+    <div class="sub">2~4명 · 사람이 2명 모이면 1분 뒤, 꽉 차면 바로 시작해요(방장은 먼저 시작 가능). 라운드마다 준비 시간이 있어요.</div>
     <div class="seats">${seats.map((s, i) => (s ? seatHtml(s, i) : `<div class="seat empty">${r.fill ? '🤖 컴퓨터가 채워요' : '빈 자리'}</div>`)).join('')}</div>
     ${auto}
-    ${host && !group
+    ${host
       ? `<div class="lobbybtns"><button class="btn gold bigbtn" data-action="startroom" ${humans < 2 ? 'disabled' : ''}>▶ 지금 시작 (${humans}명${r.fill && humans < r.size ? ` + 컴퓨터 ${r.size - humans}` : ''})</button>
          <button class="btn ${r.fill ? 'on' : 'ghost'}" data-action="fill" data-on="${r.fill ? 0 : 1}">🤖 빈자리 컴퓨터 ${r.fill ? '켜짐' : '꺼짐'}</button></div>${humans < 2 ? '<div class="sub">친구가 한 명 더 들어와야 시작할 수 있어요</div>' : ''}`
-      : group ? '' : '<div class="hl">방장이 시작하거나 자동 시작을 기다려요…</div>'}
+      : '<div class="hl">방장이 시작하거나 자동 시작을 기다려요…</div>'}
     <p class="sub">점수는 사람끼리 등수로: ${placePointsText(Math.max(2, humans))}${r.fill ? ' · 컴퓨터는 점수 없음' : ''}</p>
     ${emoteRow()}
     <p><button class="btn ghost" data-action="leaveroom">나가기</button></p>

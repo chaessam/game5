@@ -17,10 +17,6 @@ export const ONLINE = {
   autoStartMs: 60_000,
   /** 방이 꽉 차면 */
   fullStartMs: 5_000,
-  /** 선생님이 나눈 모둠 방: 첫 친구가 들어오고 이만큼 뒤(모두 오면 바로) */
-  groupStartMs: 20_000,
-  /** 선생님 반 대기실 인원 */
-  classMax: 40,
   /** 감정 스티커 간격 */
   emoteGapMs: 2_000,
 };
@@ -40,16 +36,7 @@ export const EMOTES: { char: number; text: string }[] = [
   { char: 9, text: '다음엔 이길 거야!' },
 ];
 
-/** 선생님 반 시작: n명을 2~4명 모둠으로 고르게(크기 차이 1 이하) */
-export function splitGroups(n: number, max = 4): number[] {
-  if (n <= 0) return [];
-  const k = Math.ceil(n / max);
-  return Array.from({ length: k }, (_, i) => Math.floor(n / k) + (i < n % k ? 1 : 0));
-}
-
 export type RoomStatus = 'wait' | 'play' | 'done';
-/** room: 보통 방 · class: 선생님 반 대기실(게임 없음) · group: 선생님이 나눈 모둠 방(목록에 안 보임) */
-export type RoomKind = 'room' | 'class' | 'group';
 
 export interface SeatInfo {
   nick: string;
@@ -62,7 +49,6 @@ export interface SeatInfo {
 
 export interface RoomInfo {
   id: string;
-  kind: RoomKind;
   short: boolean;
   size: number;
   status: RoomStatus;
@@ -72,8 +58,6 @@ export interface RoomInfo {
   fill: boolean;
   /** 자동 시작까지 남은 시간(없으면 null) */
   autoInMs: number | null;
-  /** 반 대기실: 지금까지 시작한 모둠 수 */
-  groups?: number;
 }
 
 export interface FinalPlace {
@@ -112,8 +96,6 @@ export type ServerMsg =
   | { t: 'state'; round: number; remainMs: number; submitted: boolean }
   | { t: 'error'; code: string; error: string }
   | { t: 'emote'; seat: number; nick: string; id: number }
-  /** 선생님이 모둠을 나눔: 이 방으로 옮겨 가요 */
-  | { t: 'goto'; id: string }
   | { t: 'notice'; text: string };
 
 export type ClientMsg =
@@ -122,8 +104,7 @@ export type ClientMsg =
   | { t: 'ready'; round: number; board: BoardUnit[]; bots?: Record<number, BoardUnit[]> }
   | { t: 'leave' }
   | { t: 'emote'; id: number }
-  | { t: 'fill'; on: boolean }
-  | { t: 'classstart'; short: boolean };
+  | { t: 'fill'; on: boolean };
 
 export interface LobbyRoom {
   id: string;
@@ -131,7 +112,6 @@ export interface LobbyRoom {
   n: number;
   size: number;
   short: boolean;
-  kind: RoomKind;
   /** 우리 학교 방 */
   mine: boolean;
 }

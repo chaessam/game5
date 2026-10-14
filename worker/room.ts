@@ -1,6 +1,5 @@
 // 온라인 대결 방(Durable Object 하나 = 방 하나). WebSocket 잠자기(Hibernation)를 써서
 // 라운드 사이에는 서버가 잠들어 무료 한도를 아낀다. 라운드마다: 모두의 보드를 한 번 받고 → 결과 계산 → 한 번 알림.
-// 방 종류: room(보통 방) · class(선생님 반 대기실, 게임 없이 모둠만 나눔) · group(선생님이 나눈 모둠 방)
 // 빈자리 컴퓨터(보통)는 방장 기기가 대신 두고 보드를 함께 보낸다(서버 계산 없음). 점수는 사람끼리 등수로.
 import { DurableObject } from 'cloudflare:workers';
 import type { BoardUnit } from '../src/engine/types';
@@ -8,8 +7,8 @@ import { advance, createOnlineGame, currentPlan, deserializeGame, pairings, rank
 import type { GameState } from '../src/game/types';
 import { cleanBoard, validBoard } from '../src/shared/board';
 import {
-  EMOTES, ONLINE, ONLINE_BOT_NAMES, splitGroups,
-  type ClientMsg, type FinalPlace, type RoomInfo, type RoomKind, type RoomStatus, type RoundMsg, type ServerMsg,
+  EMOTES, ONLINE, ONLINE_BOT_NAMES,
+  type ClientMsg, type FinalPlace, type RoomInfo, type RoomStatus, type RoundMsg, type ServerMsg,
 } from '../src/shared/online';
 import type { Env, Who } from './env';
 
@@ -20,21 +19,15 @@ interface Seat extends Who {
 type Tag = { school: string; nick: string };
 interface RoomState {
   id: string;
-  kind: RoomKind;
   short: boolean;
   size: number;
   status: RoomStatus;
   host: number;
-  /** 반 대기실: 그 학교만 / 모둠 방: 정해진 친구만 */
-  school: string;
-  members: Tag[] | null;
   seats: Seat[];
   /** 빈자리 컴퓨터로 채우기 */
   fill: boolean;
   /** 자동 시작 시각 */
   autoAt: number | null;
-  /** 반 대기실: 시작한 모둠 수 */
-  groups: number;
   seed: number;
   game: string;
   round: number;
@@ -106,9 +99,8 @@ export class Room extends DurableObject<Env> {
   info(): RoomInfo {
     const st = this.st!;
     return {
-      id: st.id, kind: st.kind, short: st.short, size: st.size, status: st.status, host: st.host, fill: st.fill,
+      id: st.id, short: st.short, size: st.size, status: st.status, host: st.host, fill: st.fill,
       autoInMs: st.status === 'wait' && st.autoAt ? Math.max(0, st.autoAt - Date.now()) : null,
-      groups: st.groups,
       seats: st.seats.map((s, i) => ({
         nick: s.nick, schoolName: s.schoolName, points: s.points, online: s.bot ? true : this.online(i) && !s.left,
         ...(s.bot ? { bot: true } : {}), ...(s.teacher ? { teacher: true } : {}),
@@ -149,8 +141,8 @@ export class Room extends DurableObject<Env> {
       const info = await this.store().roomInfo(id);
       if (!info) return ['no_room', '없어진 방이에요. 방 목록을 새로 고쳐 봐요.'];
       st = this.st = {
-        id, kind: info.kind, short: info.short, size: info.size, status: 'wait', host: 0, school: info.school, members: info.members,
-        seats: [], fill: true, autoAt: null, groups: 0,
+        id, short: info.short, size: info.size, status: 'wait', host: 0,
+        seats: [], fill: true, autoAt: null,
         seed: 0, game: '', round: 0, bots: [], driver: 0, ranked: false, boards: [], last: [], deadline: 0, results: [],
       };
     }
@@ -167,16 +159,10 @@ export class Room extends DurableObject<Env> {
       await this.save();
       return null; // 'hello'를 받으면 지난 결과를 다시 보냄
     }
-    if (st.kind === 'class' && who.school !== st.school) return ['other_school', '다른 학교 선생님 반이에요.'];
-    if (st.members && !st.members.some((m) => same(m, who))) return ['not_member', '이 모둠 친구만 들어올 수 있어요.'];
     if (i < 0) {
       if (st.seats.length >= st.size) return ['full', '방이 꽉 찼어요.'];
       st.seats.push({ ...who });
     } else st.seats[i] = { ...st.seats[i], ...who };
-    if (st.kind === 'class') {
-      const t = st.seats.findIndex((s) => s.teacher);
-      st.host = t >= 0 ? t : 0;
-    }
     await this.updateAuto();
     await this.save();
     await this.store().roomUpdate(st.id, st.seats.length);
@@ -184,16 +170,13 @@ export class Room extends DurableObject<Env> {
     return null;
   }
 
-  /** 자동 시작: 사람이 2명 모이면 60초 뒤, 꽉 차면 5초 뒤. 모둠 방은 다 모이면 바로, 아니면 첫 친구 20초 뒤 */
+  /** 자동 시작: 사람이 2명 모이면 60초 뒤, 꽉 차면 5초 뒤 */
   async updateAuto() {
     const st = this.st!;
-    if (st.status !== 'wait' || st.kind === 'class') return;
+    if (st.status !== 'wait') return;
     const now = Date.now();
     const humans = st.seats.filter((s, i) => !s.bot && this.online(i)).length;
-    if (st.kind === 'group') {
-      const all = !!st.members && st.members.every((m) => st.seats.some((s, i) => same(s, m) && this.online(i)));
-      st.autoAt = all ? now + 3000 : humans ? (st.autoAt ?? now + ONLINE.groupStartMs) : null;
-    } else if (humans >= st.size) st.autoAt = Math.min(st.autoAt ?? Infinity, now + ONLINE.fullStartMs);
+    if (humans >= st.size) st.autoAt = Math.min(st.autoAt ?? Infinity, now + ONLINE.fullStartMs);
     else if (humans >= 2) st.autoAt = st.autoAt ?? now + ONLINE.autoStartMs;
     else st.autoAt = null;
     if (st.autoAt) await this.ctx.storage.setAlarm(st.autoAt);
@@ -224,17 +207,14 @@ export class Room extends DurableObject<Env> {
         }
         break;
       case 'start':
-        if (st.status === 'wait' && seat === st.host && st.kind !== 'class') await this.start();
+        if (st.status === 'wait' && seat === st.host) await this.start();
         break;
       case 'fill':
-        if (st.status === 'wait' && seat === st.host && st.kind === 'room') {
+        if (st.status === 'wait' && seat === st.host) {
           st.fill = !!m.on;
           await this.save();
           this.sendRoom();
         }
-        break;
-      case 'classstart':
-        if (st.kind === 'class' && st.seats[seat]?.teacher) await this.classStart(ws, !!m.short);
         break;
       case 'ready': {
         if (st.status !== 'play' || m.round !== st.round || !validBoard(m.board)) return;
@@ -287,10 +267,7 @@ export class Room extends DurableObject<Env> {
     const st = this.st!;
     if (st.status === 'wait') {
       st.seats.splice(seat, 1);
-      if (st.kind === 'class') {
-        const t = st.seats.findIndex((s) => s.teacher);
-        st.host = t >= 0 ? t : 0;
-      } else if (st.host >= st.seats.length || st.host === seat) st.host = 0;
+      if (st.host >= st.seats.length || st.host === seat) st.host = 0;
       else if (seat < st.host) st.host--;
       if (!st.seats.length) {
         await this.store().roomRemove(st.id);
@@ -311,8 +288,8 @@ export class Room extends DurableObject<Env> {
   async start() {
     const st = this.st!;
     const keep = st.seats.filter((s, i) => !s.bot && this.online(i));
-    // 보통 방은 사람 2명부터, 선생님이 나눈 모둠은 1명이어도 시작(컴퓨터와 연습, 점수 없음)
-    if (keep.length < (st.kind === 'group' ? 1 : 2)) {
+    // 사람 2명부터
+    if (keep.length < 2) {
       st.autoAt = null;
       await this.save();
       this.sendRoom();
@@ -322,7 +299,7 @@ export class Room extends DurableObject<Env> {
     st.host = 0;
     st.ranked = keep.length >= 2;
     st.bots = [];
-    if (st.fill || keep.length < 2) {
+    if (st.fill) {
       while (st.seats.length < ONLINE.maxPlayers) {
         st.bots.push(st.seats.length);
         st.seats.push({ school: '', nick: ONLINE_BOT_NAMES[st.bots.length - 1], schoolName: '', points: 0, teacher: false, bot: true });
@@ -348,41 +325,6 @@ export class Room extends DurableObject<Env> {
       t: 'start', seed: st.seed, short: st.short, names, points, you, monsterIndex: g.monsterIndex, remainMs: ONLINE.firstPrepMs,
       bots: st.bots, driver: st.driver, ranked: st.ranked,
     }));
-  }
-
-  /** 선생님 [반 시작]: 들어와 있는 학생을 2~4명 모둠으로 고르게 나눠 모둠 방을 만들고 옮겨 보냄 */
-  async classStart(teacherWs: WebSocket, short: boolean) {
-    const st = this.st!;
-    const students = st.seats.map((s, i) => ({ s, i })).filter((x) => !x.s.teacher && this.online(x.i));
-    if (!students.length) {
-      this.send(teacherWs, { t: 'notice', text: '아직 들어온 학생이 없어요.' });
-      return;
-    }
-    for (let i = students.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [students[i], students[j]] = [students[j], students[i]];
-    }
-    const moved: { tag: Tag; id: string }[] = [];
-    let k = 0;
-    for (const size of splitGroups(students.length)) {
-      const members = students.slice(k, k + size).map((x) => ({ school: x.s.school, nick: x.s.nick }));
-      k += size;
-      const id = await this.store().createGroupRoom({ school: st.school, title: `모둠 ${st.groups + 1}`, short, members });
-      st.groups++;
-      for (const tag of members) moved.push({ tag, id });
-    }
-    for (const ws of this.open()) {
-      const t = this.tagOf(ws);
-      const mv = t && moved.find((x) => same(x.tag, t));
-      if (mv) this.send(ws, { t: 'goto', id: mv.id });
-    }
-    st.seats = st.seats.filter((s) => !moved.some((x) => same(x.tag, s)));
-    const t = st.seats.findIndex((s) => s.teacher);
-    st.host = t >= 0 ? t : 0;
-    await this.save();
-    await this.store().roomUpdate(st.id, st.seats.length);
-    this.sendRoom();
-    this.send(teacherWs, { t: 'notice', text: `학생 ${students.length}명을 모둠 ${splitGroups(students.length).length}개로 나눠 시작했어요.` });
   }
 
   /** 라운드 마감: 받은 보드(없으면 지난 보드)로 결과 계산 → 모두에게 한 번 알림 */
